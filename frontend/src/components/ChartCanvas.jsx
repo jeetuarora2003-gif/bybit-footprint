@@ -25,7 +25,7 @@ const MAX_CANDLE_W = 200;
 const PROFILE_MAX_W = 80;
 const DOM_MAX_W = 128;
 
-export default function ChartCanvas({ candles, settings, activeFeatures, onCrosshairMove }) {
+export default function ChartCanvas({ candles, settings, activeFeatures, onCrosshairMove, viewCommand }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const goLiveBtnRef = useRef(null);
@@ -42,6 +42,19 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
     featuresRef.current = activeFeatures;
     crosshairCbRef.current = onCrosshairMove;
   }, [candles, settings, activeFeatures, onCrosshairMove]);
+
+  useEffect(() => {
+    if (!viewCommand) return;
+    const state = stateRef.current;
+    if (viewCommand.type === "reset") {
+      state.autoScroll = true;
+      state.autoScaleY = true;
+      state.velocityX = 0;
+    } else if (viewCommand.type === "fit") {
+      state.autoScaleY = true;
+      state.velocityX = 0;
+    }
+  }, [viewCommand]);
 
   const stateRef = useRef({
     offsetX: 0,
@@ -111,6 +124,7 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
     return () => canvas.removeEventListener("wheel", handler);
   }, []);
 
+  /* eslint-disable react-hooks/immutability */
   const onMove = useCallback((event) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -190,6 +204,12 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
     stateRef.current.autoScroll = true;
   }, []);
 
+  const onGoLive = useCallback(() => {
+    stateRef.current.autoScroll = true;
+    stateRef.current.velocityX = 0;
+  }, []);
+  /* eslint-enable react-hooks/immutability */
+
   return (
     <div className="chart-canvas-container" ref={containerRef} style={{ position: "relative" }}>
       <canvas
@@ -220,10 +240,7 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
           fontFamily: "'JetBrains Mono', monospace",
           zIndex: 10,
         }}
-        onClick={() => {
-          stateRef.current.autoScroll = true;
-          stateRef.current.velocityX = 0;
-        }}
+        onClick={onGoLive}
       >
         Live
       </button>
@@ -259,9 +276,14 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
   const chartW = width - PRICE_AXIS_W;
   const chartH = height - TIME_AXIS_H;
   const rowSize = getRowSize(settings);
-  const showSessionProfile = activeFeatures?.has?.("vol");
-  const showImbalanceMarkers = activeFeatures?.has?.("fpbs") || settings.dataView === "imbalance";
-  const showAuctionMarkers = activeFeatures?.has?.("hl");
+  const featureFlags = {
+    showSessionProfile: activeFeatures?.has?.("vol"),
+    showTradeCount: activeFeatures?.has?.("tcount"),
+    showImbalanceMarkers: activeFeatures?.has?.("fpbs") || settings.dataView === "imbalance",
+    showTradeSize: activeFeatures?.has?.("tsize"),
+    showDeltaBars: activeFeatures?.has?.("dbars"),
+    showAuctionMarkers: activeFeatures?.has?.("hl"),
+  };
 
   const totalW = candles.length * state.candleW;
   const liveEdgeMax = Math.max(0, totalW - chartW);
@@ -357,7 +379,7 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
     }
   }
 
-  if (showSessionProfile) {
+  if (featureFlags.showSessionProfile) {
     drawSessionProfile(ctx, visible, chartH, p2y, rowSize);
   }
 
@@ -374,8 +396,7 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
       maxClusterVol,
       maxClusterDelta,
       rowSize,
-      showImbalanceMarkers,
-      showAuctionMarkers,
+      featureFlags,
     );
   }
 
@@ -533,11 +554,11 @@ function drawCandle(
   gMaxV,
   gMaxD,
   rowSize,
-  showImbalanceMarkers,
-  showAuctionMarkers,
+  featureFlags,
 ) {
   const { open, high, low, close, clusters } = candle;
-  const up = close >= open;
+  const directionalValue = featureFlags.showDeltaBars ? (candle.candle_delta ?? 0) : close - open;
+  const up = directionalValue >= 0;
   const color = up ? GREEN : RED;
   const style = settings.candleStyle;
 
@@ -672,7 +693,7 @@ function drawCandle(
 
     drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW);
 
-    if (showImbalanceMarkers) {
+    if (featureFlags.showImbalanceMarkers) {
       drawImbalanceMarker(ctx, imbalance, cluster.price, centerX, candleW, rowTop, rowH);
     }
 
@@ -696,8 +717,12 @@ function drawCandle(
     ctx.stroke();
   }
 
-  if (showAuctionMarkers) {
+  if (featureFlags.showAuctionMarkers) {
     drawUnfinishedAuction(ctx, clusters, centerX, candleW, rowSize, p2y);
+  }
+
+  if (featureFlags.showTradeCount || featureFlags.showTradeSize) {
+    drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags);
   }
 }
 
@@ -827,6 +852,28 @@ function drawUnfinishedAuction(ctx, clusters, centerX, candleW, rowSize, p2y) {
     ctx.beginPath();
     ctx.arc(centerX + candleW / 2 + 4, y, 2.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+}
+
+function drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags) {
+  if (candleW < 26) return;
+
+  const totalTrades = (candle.buy_trades ?? 0) + (candle.sell_trades ?? 0);
+  const avgTradeSize = totalTrades > 0 ? (candle.total_volume ?? 0) / totalTrades : 0;
+
+  ctx.font = "9px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillStyle = "rgba(255,255,255,0.78)";
+
+  if (featureFlags.showTradeCount && totalTrades > 0) {
+    ctx.fillText(`${totalTrades}t`, centerX, yTop - 3);
+  }
+
+  if (featureFlags.showTradeSize && avgTradeSize > 0) {
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "rgba(148,163,184,0.82)";
+    ctx.fillText(fmtV(avgTradeSize), centerX, yBottom + 3);
   }
 }
 

@@ -8,7 +8,14 @@ function fmt(value) {
   return value.toFixed(1);
 }
 
-export default function StatusBar({ crosshairData, status, liveCandle }) {
+export default function StatusBar({
+  crosshairData,
+  status,
+  liveCandle,
+  onResetView,
+  onAutoFitView,
+  settings,
+}) {
   const now = new Date();
   const clock = now.toLocaleTimeString([], {
     hour: "2-digit",
@@ -37,14 +44,18 @@ export default function StatusBar({ crosshairData, status, liveCandle }) {
         <span className="stb-info">
           OI: {liveCandle?.oi ? fmt(liveCandle.oi) : "-"}
         </span>
+        <span className="stb-sep">|</span>
+        <span className="stb-info">
+          Mode: {settings.clusterMode}
+        </span>
       </div>
 
       <div className="stb-right">
         <span className="stb-dot" style={{ background: status === "connected" ? "var(--green)" : "var(--red)" }} />
         <span className="stb-info">{status}</span>
         <span className="stb-sep">|</span>
-        <span className="stb-label">Reset</span>
-        <span className="stb-label">Zoom On</span>
+        <button className="stb-action" onClick={onResetView}>Reset View</button>
+        <button className="stb-action" onClick={onAutoFitView}>Fit Y</button>
         <span className="stb-clock mono">{clock}</span>
       </div>
     </div>

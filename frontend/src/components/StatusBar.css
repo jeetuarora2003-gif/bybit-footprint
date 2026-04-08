@@ -42,6 +42,19 @@
   color: var(--text);
 }
 
+.stb-action {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.stb-action:hover {
+  color: var(--text);
+}
+
 .stb-clock {
   color: var(--text-dim);
   margin-left: 4px;

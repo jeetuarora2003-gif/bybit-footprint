@@ -67,18 +67,28 @@ const SHADING_MODES = [
 ];
 
 const FEATURE_TABS = [
-  { key: "vol", label: "Vol" },
-  { key: "tcount", label: "TCount" },
-  { key: "rekt", label: "Rekt" },
-  { key: "fpbs", label: "FPBS" },
-  { key: "tsize", label: "TSize" },
-  { key: "cs", label: "CS" },
-  { key: "dbars", label: "DBars" },
-  { key: "oi", label: "OI" },
-  { key: "hl", label: "HL" },
-  { key: "ns", label: "NS" },
-  { key: "vwap", label: "VWAP" },
+  { key: "vol", label: "Vol", supported: true },
+  { key: "tcount", label: "TCount", supported: true },
+  { key: "rekt", label: "Rekt", supported: false },
+  { key: "fpbs", label: "FPBS", supported: true },
+  { key: "tsize", label: "TSize", supported: true },
+  { key: "cs", label: "CS", supported: false },
+  { key: "dbars", label: "DBars", supported: true },
+  { key: "oi", label: "OI", supported: true },
+  { key: "hl", label: "HL", supported: true },
+  { key: "ns", label: "NS", supported: false },
+  { key: "vwap", label: "VWAP", supported: true },
 ];
+
+const MODE_PRESETS = {
+  void: { dataView: "none", candleStyle: "colorCandle" },
+  volumeProfile: { dataView: "volume", candleStyle: "borderedCandle" },
+  deltaProfile: { dataView: "delta", candleStyle: "borderedCandle" },
+  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle" },
+  volumeCluster: { dataView: "volume", candleStyle: "colorCandle" },
+  deltaCluster: { dataView: "delta", candleStyle: "colorCandle" },
+  deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle" },
+};
 
 function Dropdown({ label, value, options, onChange, wide }) {
   const [open, setOpen] = useState(false);
@@ -122,13 +132,26 @@ function Dropdown({ label, value, options, onChange, wide }) {
 }
 
 export default function Toolbar({
-  settings, updateSetting, status,
-  activeFeatureArr, toggleFeature,
+  settings,
+  updateSetting,
+  status,
+  activeFeatureArr,
+  toggleFeature,
+  onApplyPreset,
+  onResetWorkspace,
 }) {
+  const applyClusterMode = (value) => {
+    updateSetting("clusterMode", value);
+    const preset = MODE_PRESETS[value];
+    if (preset?.dataView) updateSetting("dataView", preset.dataView);
+    if (preset?.candleStyle) updateSetting("candleStyle", preset.candleStyle);
+  };
+
   return (
     <div className="toolbar">
       <div className="tb-left">
-        <button className="tb-btn tb-btn--accent">Profile</button>
+        <button className="tb-btn tb-btn--accent" onClick={onApplyPreset}>Classic</button>
+        <button className="tb-btn" onClick={onResetWorkspace}>Reset</button>
         <div className="tb-sep" />
 
         <button className="tb-btn">
@@ -154,7 +177,7 @@ export default function Toolbar({
           label="Cluster"
           value={settings.clusterMode}
           options={CLUSTER_MODES}
-          onChange={(value) => updateSetting("clusterMode", value)}
+          onChange={applyClusterMode}
         />
         <Dropdown
           label="Shading"
@@ -180,8 +203,14 @@ export default function Toolbar({
         {FEATURE_TABS.map((tab) => (
           <button
             key={tab.key}
-            className={`tb-tab${activeFeatureArr.includes(tab.key) ? " tb-tab--active" : ""}`}
-            onClick={() => toggleFeature(tab.key)}
+            className={[
+              "tb-tab",
+              activeFeatureArr.includes(tab.key) ? "tb-tab--active" : "",
+              !tab.supported ? "tb-tab--disabled" : "",
+            ].filter(Boolean).join(" ")}
+            onClick={() => tab.supported && toggleFeature(tab.key)}
+            disabled={!tab.supported}
+            title={tab.supported ? tab.label : `${tab.label} requires data not wired yet`}
           >
             {tab.label}
           </button>
@@ -196,8 +225,9 @@ export default function Toolbar({
       </div>
 
       <div className="tb-right">
-        <button className="tb-btn">Default</button>
-        <button className="tb-btn tb-btn--icon">Cfg</button>
+        <span className="tb-btn tb-btn--static mono">
+          {settings.clusterMode}
+        </span>
         <div
           className={`tb-status-dot ${status === "connected" ? "on" : "off"}`}
           title={status === "connected" ? "Connected" : "Disconnected"}
