@@ -3,12 +3,13 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
+  height: 26px;
   padding: 0 8px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -47,4 +48,5 @@
   font-size: 10px;
   margin-left: auto;
   white-space: nowrap;
+  padding-left: 8px;
 }

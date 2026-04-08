@@ -6,6 +6,16 @@ import {
   formatSignedCompactValue,
 } from "../utils/exoFormat";
 
+const CLUSTER_LABELS = {
+  void: "Void",
+  volumeProfile: "Volume Profile",
+  deltaProfile: "Delta Profile",
+  bidAskProfile: "Bid-Ask Profile",
+  volumeCluster: "Volume Cluster",
+  deltaCluster: "Delta Cluster",
+  deltaLadder: "Delta Ladder",
+};
+
 export default function StatusBar({
   crosshairData,
   status,
@@ -61,7 +71,7 @@ export default function StatusBar({
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">
-          Mode: {settings.clusterMode}
+          Mode: {CLUSTER_LABELS[settings.clusterMode] ?? settings.clusterMode}
         </span>
       </div>
 

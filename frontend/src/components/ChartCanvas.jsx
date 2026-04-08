@@ -426,11 +426,22 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
 
   let maxClusterVol = 0.001;
   let maxClusterDelta = 0.001;
+  let maxLadderSize = 0.001;
   for (const candle of visible) {
     for (const cluster of candle.clusters || []) {
       if (cluster.totalVol > maxClusterVol) maxClusterVol = cluster.totalVol;
       if (Math.abs(cluster.delta) > maxClusterDelta) maxClusterDelta = Math.abs(cluster.delta);
     }
+    for (const bid of candle.bids || []) {
+      if ((bid.size || 0) > maxLadderSize) maxLadderSize = bid.size;
+    }
+    for (const ask of candle.asks || []) {
+      if ((ask.size || 0) > maxLadderSize) maxLadderSize = ask.size;
+    }
+  }
+
+  if (settings.showDOM && visible.length > 0) {
+    drawLiquidityHeatmap(ctx, visible, startIdx, i2x, p2y, state.candleW, rowSize, chartH, maxLadderSize);
   }
 
   if (featureFlags.showSessionProfile) {
@@ -1022,6 +1033,42 @@ function drawSessionProfile(ctx, visible, chartH, p2y, rowSize) {
     const width = (volume / maxVol) * PROFILE_MAX_W;
     ctx.fillStyle = price === pocPrice ? PROFILE_POC : PROFILE_COLOR;
     ctx.fillRect(0, rowTop, width, Math.max(1, rowH - 0.5));
+  }
+}
+
+function drawLiquidityHeatmap(ctx, visible, startIdx, i2x, p2y, candleW, fallbackRowSize, chartH, maxLadderSize) {
+  if (!maxLadderSize || maxLadderSize <= 0) return;
+
+  for (let index = 0; index < visible.length; index += 1) {
+    const candle = visible[index];
+    const centerX = i2x(startIdx + index);
+    const left = centerX - candleW / 2;
+    const width = Math.max(2, candleW - 2);
+    const rowSize = Number(candle.row_size) || fallbackRowSize;
+
+    drawHeatmapSide(ctx, candle.bids || [], maxLadderSize, left, width, p2y, rowSize, chartH, false);
+    drawHeatmapSide(ctx, candle.asks || [], maxLadderSize, left, width, p2y, rowSize, chartH, true);
+  }
+}
+
+function drawHeatmapSide(ctx, levels, maxLadderSize, left, width, p2y, rowSize, chartH, isAsk) {
+  for (const level of levels) {
+    const rowTopY = p2y(level.price + rowSize);
+    const rowBottomY = p2y(level.price);
+    const rowTop = Math.min(rowTopY, rowBottomY);
+    const rowH = Math.max(1, Math.abs(rowBottomY - rowTopY) - 0.5);
+    if (rowTop > chartH || rowTop + rowH < 0) continue;
+
+    const intensity = Math.min((level.size || 0) / maxLadderSize, 1);
+    const alpha = 0.03 + intensity * 0.22;
+    ctx.fillStyle = isAsk ? `rgba(239,83,80,${alpha})` : `rgba(66,165,245,${alpha})`;
+    ctx.fillRect(left + 1, rowTop, width, rowH);
+
+    if (intensity >= 0.75) {
+      ctx.strokeStyle = isAsk ? "rgba(239,83,80,0.22)" : "rgba(66,165,245,0.22)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(left + 1.5, rowTop + 0.5, Math.max(1, width - 1), Math.max(1, rowH - 1));
+    }
   }
 }
 

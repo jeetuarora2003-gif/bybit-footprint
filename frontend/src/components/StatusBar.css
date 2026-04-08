@@ -3,18 +3,34 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 22px;
+  height: 24px;
   padding: 0 8px;
   background: var(--bg-toolbar);
   border-top: 1px solid var(--border);
   font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  gap: 8px;
+  overflow: hidden;
 }
 
 .stb-left, .stb-right {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.stb-left {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.stb-left::-webkit-scrollbar {
+  display: none;
 }
 
 .stb-info {
