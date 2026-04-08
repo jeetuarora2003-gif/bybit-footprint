@@ -84,7 +84,7 @@ const MODE_PRESETS = {
   void: { dataView: "none", candleStyle: "colorCandle", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
   volumeProfile: { dataView: "volume", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
   deltaProfile: { dataView: "delta", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
-  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: true, showHeatmap: false },
+  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
   volumeCluster: { dataView: "volume", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
   deltaCluster: { dataView: "delta", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
   deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: false, showPOC: true, showDOM: true, showHeatmap: false },

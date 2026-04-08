@@ -716,6 +716,8 @@ function drawCandle(
   const up = directionalValue >= 0;
   const color = up ? GREEN : RED;
   const style = settings.candleStyle;
+  const minimalProfileMode = style === "none" && settings.clusterMode === "bidAskProfile";
+  const exoImbalanceProfile = minimalProfileMode && settings.dataView === "imbalance";
 
   const yOpen = p2y(open);
   const yClose = p2y(close);
@@ -799,7 +801,7 @@ function drawCandle(
     if (vaAcc >= vaTarget) break;
   }
 
-  const barMax = candleW * 0.45;
+  const barMax = candleW * (minimalProfileMode ? 0.34 : 0.45);
 
   for (let clusterIndex = 0; clusterIndex < clusters.length; clusterIndex += 1) {
     const cluster = clusters[clusterIndex];
@@ -809,7 +811,7 @@ function drawCandle(
     const rowTop = Math.min(yRowTop, yRowBottom);
     if (rowTop > chartH || rowTop + rowH < 0) continue;
 
-    if (settings.showVA && vaSet.has(cluster.price)) {
+    if (!minimalProfileMode && settings.showVA && vaSet.has(cluster.price)) {
       ctx.fillStyle = VA_COLOR;
       ctx.fillRect(centerX - candleW / 2, rowTop, candleW, rowH);
     }
@@ -823,12 +825,7 @@ function drawCandle(
       ctx.fillStyle = cluster.delta >= 0 ? BUY_FILL : RED_FILL;
       ctx.fillRect(centerX - f * barMax, rowTop, f * barMax * 2, Math.max(rowH - 0.5, 1));
     } else if (settings.clusterMode === "bidAskProfile") {
-      const askF = cluster.buyVol / maxV;
-      const bidF = cluster.sellVol / maxV;
-      ctx.fillStyle = RED_FILL;
-      ctx.fillRect(centerX - askF * barMax, rowTop, askF * barMax, Math.max(rowH - 0.5, 1));
-      ctx.fillStyle = BUY_FILL;
-      ctx.fillRect(centerX, rowTop, bidF * barMax, Math.max(rowH - 0.5, 1));
+      drawBidAskProfileRow(ctx, cluster, centerX, rowTop, rowH, barMax, maxV, exoImbalanceProfile);
     } else if (settings.clusterMode === "volumeCluster") {
       const intensity = Math.min(cluster.totalVol / maxV, 1);
       ctx.fillStyle = `rgba(100,149,237,${0.06 + intensity * 0.5})`;
@@ -863,11 +860,11 @@ function drawCandle(
       clusters.length,
     );
 
-    if (featureFlags.showImbalanceMarkers) {
+    if (featureFlags.showImbalanceMarkers && !exoImbalanceProfile) {
       drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH);
     }
 
-    if (rowH >= 3) {
+    if (!minimalProfileMode && rowH >= 3) {
       ctx.strokeStyle = "rgba(255,255,255,0.03)";
       ctx.lineWidth = 0.5;
       ctx.beginPath();
@@ -877,7 +874,7 @@ function drawCandle(
     }
   }
 
-  if (settings.showPOC) {
+  if (settings.showPOC && !minimalProfileMode) {
     const pocTop = p2y(pocPrice + candleRowSize);
     const pocBottom = p2y(pocPrice);
     const pocRowTop = Math.min(pocTop, pocBottom);
@@ -889,15 +886,15 @@ function drawCandle(
     ctx.strokeRect(centerX - candleW / 2 + 0.5, pocRowTop + 0.5, candleW - 1, Math.max(1, pocRowHeight - 1));
   }
 
-  if (featureFlags.showAuctionMarkers) {
+  if (featureFlags.showAuctionMarkers && style !== "none") {
     drawUnfinishedAuction(ctx, candle, clusters, centerX, candleW, candleRowSize, p2y);
   }
 
-  if (featureFlags.showImbalanceMarkers) {
+  if (featureFlags.showImbalanceMarkers && style !== "none" && !exoImbalanceProfile) {
     drawCandleImbalanceBadge(ctx, candle, centerX, yHigh, yTop, candleW, bodyW, settings.shortNumbers);
   }
 
-  if (featureFlags.showTradeCount || featureFlags.showTradeSize || featureFlags.showCandleStats) {
+  if ((featureFlags.showTradeCount || featureFlags.showTradeSize || featureFlags.showCandleStats) && style !== "none") {
     drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags, settings.shortNumbers);
   }
 }
@@ -939,7 +936,7 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW,
     ctx.fillStyle = RED;
     ctx.textAlign = "right";
     if (leftText) ctx.fillText(leftText, centerX - 3, yMid);
-    ctx.fillStyle = BUY;
+    ctx.fillStyle = GREEN;
     ctx.textAlign = "left";
     if (rightText) ctx.fillText(rightText, centerX + 3, yMid);
     return;
@@ -962,7 +959,7 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW,
       candleW,
       fontSize,
     });
-    ctx.fillStyle = BUY;
+    ctx.fillStyle = GREEN;
     ctx.textAlign = "left";
     drawImbalanceTextCell(ctx, {
       text: rightText,
@@ -995,21 +992,56 @@ function drawImbalanceTextCell(ctx, {
 }) {
   if (!text) return;
 
-  const color = side === "bid" ? BUY : RED;
+  const color = side === "bid" ? (active ? "#bfd2ff" : GREEN) : RED;
   const width = Math.min(candleW / 2 - 4, Math.max(14, text.length * (fontSize * 0.62)));
   const boxX = align === "right" ? x - width - 2 : x - 2;
 
-  if (active) {
-    ctx.fillStyle = stacked ? "rgba(18,18,24,0.94)" : "rgba(18,18,24,0.78)";
-    ctx.fillRect(boxX, rowTop + 1, width + 4, Math.max(2, rowH - 2));
-    ctx.strokeStyle = stacked ? color : "rgba(255,255,255,0.25)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(boxX + 0.5, rowTop + 1.5, width + 3, Math.max(1, rowH - 3));
-  }
-
+  ctx.fillStyle = active
+    ? (stacked ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.82)")
+    : "rgba(0,0,0,0.56)";
+  ctx.fillRect(boxX, rowTop + 1, width + 4, Math.max(2, rowH - 2));
   ctx.fillStyle = color;
   ctx.textAlign = align;
   ctx.fillText(text, x, y);
+}
+
+function drawBidAskProfileRow(ctx, cluster, centerX, rowTop, rowH, barMax, maxV, emphasizeImbalance) {
+  const askWidth = (cluster.buyVol / maxV) * barMax;
+  const bidWidth = (cluster.sellVol / maxV) * barMax;
+  const innerHeight = Math.max(rowH - 0.5, 1);
+  const baseAskColor = emphasizeImbalance ? "rgba(255,136,136,0.78)" : RED_FILL;
+  const baseBidColor = emphasizeImbalance ? "rgba(102,255,120,0.78)" : BUY_FILL;
+
+  if (askWidth > 0) {
+    ctx.fillStyle = baseAskColor;
+    ctx.fillRect(centerX - askWidth, rowTop, askWidth, innerHeight);
+  }
+  if (bidWidth > 0) {
+    ctx.fillStyle = baseBidColor;
+    ctx.fillRect(centerX, rowTop, bidWidth, innerHeight);
+  }
+
+  if (!emphasizeImbalance) return;
+
+  const yMid = rowTop + rowH / 2;
+  if (cluster.imbalance_buy) {
+    const lineWidth = Math.max(askWidth, barMax * 0.55);
+    ctx.strokeStyle = cluster.stacked_buy ? "rgba(255,45,45,0.98)" : "rgba(255,45,45,0.86)";
+    ctx.lineWidth = Math.max(1.2, rowH * 0.34);
+    ctx.beginPath();
+    ctx.moveTo(centerX - lineWidth, yMid);
+    ctx.lineTo(centerX, yMid);
+    ctx.stroke();
+  }
+  if (cluster.imbalance_sell) {
+    const lineWidth = Math.max(bidWidth, barMax * 0.55);
+    ctx.strokeStyle = cluster.stacked_sell ? "rgba(143,170,255,0.98)" : "rgba(143,170,255,0.86)";
+    ctx.lineWidth = Math.max(1.2, rowH * 0.34);
+    ctx.beginPath();
+    ctx.moveTo(centerX, yMid);
+    ctx.lineTo(centerX + lineWidth, yMid);
+    ctx.stroke();
+  }
 }
 
 function drawFootprintMidline(ctx, centerX, rowTop, rowH) {
