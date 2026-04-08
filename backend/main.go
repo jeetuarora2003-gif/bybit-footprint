@@ -340,6 +340,13 @@ func copyDepthSnapshots(src []DepthSnapshot) []DepthSnapshot {
 	return dst
 }
 
+func lastCompletedBar(bars []BroadcastMsg) *BroadcastMsg {
+	if len(bars) == 0 {
+		return nil
+	}
+	return &bars[len(bars)-1]
+}
+
 func round6(v float64) float64 {
 	return math.Round(v*1e6) / 1e6
 }
@@ -552,6 +559,10 @@ func main() {
 	h := newHub()
 	ob := newOrderBook()
 	oi := &OITracker{}
+	store, err := newPersistenceStore("data")
+	if err != nil {
+		log.Fatalf("persistence init: %v", err)
+	}
 
 	var (
 		mu            sync.Mutex
@@ -565,6 +576,20 @@ func main() {
 		recentDepth   []DepthSnapshot
 	)
 	seenTradeSet = make(map[string]struct{}, maxSeenTradeIDs)
+
+	if loadedBars, loadedTrades, loadedDepth, err := store.Load(); err != nil {
+		log.Printf("[store] load failed, starting empty: %v", err)
+	} else {
+		completedBars = loadedBars
+		recentTrades = loadedTrades
+		recentDepth = loadedDepth
+		if lastBar := lastCompletedBar(completedBars); lastBar != nil {
+			cvd = lastBar.CVD
+			oi.current = lastBar.OI
+			oi.prevBar = lastBar.OI
+		}
+		log.Printf("[store] loaded %d bars, %d tape prints, %d depth snapshots", len(completedBars), len(recentTrades), len(recentDepth))
+	}
 
 	candleOpenTime := func(tsMs int64) int64 {
 		return tsMs - (tsMs % 60000)
@@ -608,6 +633,9 @@ func main() {
 		if len(recentTrades) > maxRecentTrades {
 			recentTrades = recentTrades[len(recentTrades)-maxRecentTrades:]
 		}
+		if err := store.AppendTrade(recentTrades[len(recentTrades)-1], recentTrades); err != nil {
+			log.Printf("[store] tape append failed: %v", err)
+		}
 
 		openT := candleOpenTime(ts)
 		if candle == nil || openT != candle.openTime {
@@ -647,6 +675,9 @@ func main() {
 				// Cap history to last maxHistory bars
 				if len(completedBars) > maxHistory {
 					completedBars = completedBars[len(completedBars)-maxHistory:]
+				}
+				if err := store.AppendBar(snapshot, completedBars); err != nil {
+					log.Printf("[store] bar append failed: %v", err)
 				}
 			} else if candle != nil {
 				// bar rotated but had no ticks — still advance OI baseline
@@ -763,6 +794,9 @@ func main() {
 				recentDepth = append(recentDepth, depthSnapshot)
 				if len(recentDepth) > maxRecentDepthSnapshots {
 					recentDepth = recentDepth[len(recentDepth)-maxRecentDepthSnapshots:]
+				}
+				if err := store.AppendDepth(depthSnapshot, recentDepth); err != nil {
+					log.Printf("[store] depth append failed: %v", err)
 				}
 			}
 
