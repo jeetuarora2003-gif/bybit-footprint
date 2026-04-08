@@ -616,6 +616,7 @@ function drawCandle(
 
   if (!clusters?.length || settings.clusterMode === "void") return;
 
+  const candleRowSize = Number(candle.row_size) || rowSize;
   const maxV = settings.shadingMode === "adaptive"
     ? gMaxV
     : Math.max(0.001, ...clusters.map((cluster) => cluster.totalVol));
@@ -643,11 +644,10 @@ function drawCandle(
     if (vaAcc >= vaTarget) break;
   }
 
-  const imbalance = getImbalanceRows(clusters);
   const barMax = candleW * 0.45;
 
   for (const cluster of clusters) {
-    const yRowTop = p2y(cluster.price + rowSize);
+    const yRowTop = p2y(cluster.price + candleRowSize);
     const yRowBottom = p2y(cluster.price);
     const rowH = Math.abs(yRowBottom - yRowTop);
     const rowTop = Math.min(yRowTop, yRowBottom);
@@ -694,7 +694,7 @@ function drawCandle(
     drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW);
 
     if (featureFlags.showImbalanceMarkers) {
-      drawImbalanceMarker(ctx, imbalance, cluster.price, centerX, candleW, rowTop, rowH);
+      drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH);
     }
 
     if (rowH >= 3) {
@@ -708,7 +708,7 @@ function drawCandle(
   }
 
   if (settings.showPOC) {
-    const y = p2y(pocPrice + rowSize / 2);
+    const y = p2y(pocPrice + candleRowSize / 2);
     ctx.strokeStyle = POC_COLOR;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -718,7 +718,7 @@ function drawCandle(
   }
 
   if (featureFlags.showAuctionMarkers) {
-    drawUnfinishedAuction(ctx, clusters, centerX, candleW, rowSize, p2y);
+    drawUnfinishedAuction(ctx, candle, clusters, centerX, candleW, candleRowSize, p2y);
   }
 
   if (featureFlags.showTradeCount || featureFlags.showTradeSize) {
@@ -764,11 +764,8 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW)
   }
 
   if (dataView === "imbalance") {
-    const ratio = cluster.buyVol > 0 && cluster.sellVol > 0
-      ? Math.max(cluster.buyVol / cluster.sellVol, cluster.sellVol / cluster.buyVol)
-      : 0;
-    if (ratio >= 3) {
-      ctx.fillStyle = cluster.buyVol > cluster.sellVol ? GREEN : RED;
+    if (cluster.imbalance_buy || cluster.imbalance_sell) {
+      ctx.fillStyle = cluster.imbalance_buy ? GREEN : RED;
       ctx.globalAlpha = 0.18;
       ctx.fillRect(centerX - candleW / 2 + 1, rowTop, candleW - 2, rowH);
       ctx.globalAlpha = 1;
@@ -782,72 +779,30 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW)
   }
 }
 
-function getImbalanceRows(clusters) {
-  const bullishRows = new Set();
-  const bearishRows = new Set();
-
-  for (let index = 0; index < clusters.length; index += 1) {
-    const current = clusters[index];
-    const below = clusters[index - 1];
-    const above = clusters[index + 1];
-
-    if (below && below.sellVol > 0 && current.buyVol >= below.sellVol * 3 && current.buyVol >= 1) {
-      bullishRows.add(current.price);
-    }
-    if (above && above.buyVol > 0 && current.sellVol >= above.buyVol * 3 && current.sellVol >= 1) {
-      bearishRows.add(current.price);
-    }
-  }
-
-  return {
-    bullishRows,
-    bearishRows,
-    bullishStacked: getStackedRows(clusters, bullishRows),
-    bearishStacked: getStackedRows(clusters, bearishRows),
-  };
-}
-
-function getStackedRows(clusters, rowSet) {
-  const stacked = new Set();
-  let streak = [];
-
-  for (const cluster of clusters) {
-    if (rowSet.has(cluster.price)) {
-      streak.push(cluster.price);
-      continue;
-    }
-    if (streak.length >= 3) streak.forEach((price) => stacked.add(price));
-    streak = [];
-  }
-
-  if (streak.length >= 3) streak.forEach((price) => stacked.add(price));
-  return stacked;
-}
-
-function drawImbalanceMarker(ctx, imbalance, price, centerX, candleW, rowTop, rowH) {
-  if (imbalance.bullishRows.has(price)) {
-    ctx.fillStyle = imbalance.bullishStacked.has(price) ? "rgba(16,185,129,0.95)" : "rgba(16,185,129,0.55)";
+function drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH) {
+  if (cluster.imbalance_buy) {
+    ctx.fillStyle = cluster.stacked_buy ? "rgba(16,185,129,0.95)" : "rgba(16,185,129,0.55)";
     ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
-  if (imbalance.bearishRows.has(price)) {
-    ctx.fillStyle = imbalance.bearishStacked.has(price) ? "rgba(239,68,68,0.95)" : "rgba(239,68,68,0.55)";
+  if (cluster.imbalance_sell) {
+    ctx.fillStyle = cluster.stacked_sell ? "rgba(239,68,68,0.95)" : "rgba(239,68,68,0.55)";
     ctx.fillRect(centerX - candleW / 2 + 1, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
 }
 
-function drawUnfinishedAuction(ctx, clusters, centerX, candleW, rowSize, p2y) {
+function drawUnfinishedAuction(ctx, candle, clusters, centerX, candleW, rowSize, p2y) {
   const lowRow = clusters[0];
   const highRow = clusters.at(-1);
   if (!lowRow || !highRow) return;
 
   ctx.fillStyle = AUCTION_COLOR;
-  if (lowRow.buyVol > 0 && lowRow.sellVol > 0) {
+  if (candle.unfinished_low ?? (lowRow.buyVol > 0 && lowRow.sellVol > 0)) {
     const y = p2y(lowRow.price + rowSize / 2);
     ctx.beginPath();
     ctx.arc(centerX - candleW / 2 - 4, y, 2.5, 0, Math.PI * 2);
     ctx.fill();
   }
-  if (highRow.buyVol > 0 && highRow.sellVol > 0) {
+  if (candle.unfinished_high ?? (highRow.buyVol > 0 && highRow.sellVol > 0)) {
     const y = p2y(highRow.price + rowSize / 2);
     ctx.beginPath();
     ctx.arc(centerX + candleW / 2 + 4, y, 2.5, 0, Math.PI * 2);

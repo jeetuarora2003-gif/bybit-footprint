@@ -76,16 +76,31 @@ type TickerData struct {
 // ════════════════════════════════════════════════════════════════════
 
 type Cluster struct {
-	Price    float64 `json:"price"`
-	BuyVol   float64 `json:"buyVol"`
-	SellVol  float64 `json:"sellVol"`
-	Delta    float64 `json:"delta"`
-	TotalVol float64 `json:"totalVol"`
+	Price         float64 `json:"price"`
+	BuyVol        float64 `json:"buyVol"`
+	SellVol       float64 `json:"sellVol"`
+	Delta         float64 `json:"delta"`
+	TotalVol      float64 `json:"totalVol"`
+	BuyTrades     int     `json:"buyTrades"`
+	SellTrades    int     `json:"sellTrades"`
+	ImbalanceBuy  bool    `json:"imbalance_buy"`
+	ImbalanceSell bool    `json:"imbalance_sell"`
+	StackedBuy    bool    `json:"stacked_buy"`
+	StackedSell   bool    `json:"stacked_sell"`
 }
 
 type BookLevel struct {
 	Price float64 `json:"price"`
 	Size  float64 `json:"size"`
+}
+
+type TapeTrade struct {
+	ID        string  `json:"id"`
+	Price     float64 `json:"price"`
+	Volume    float64 `json:"volume"`
+	Side      string  `json:"side"`
+	Timestamp int64   `json:"timestamp"`
+	Seq       int64   `json:"seq"`
 }
 
 type BroadcastMsg struct {
@@ -94,6 +109,7 @@ type BroadcastMsg struct {
 	High           float64     `json:"high"`
 	Low            float64     `json:"low"`
 	Close          float64     `json:"close"`
+	RowSize        float64     `json:"row_size"`
 	Clusters       []Cluster   `json:"clusters"`
 	CandleDelta    float64     `json:"candle_delta"`
 	CVD            float64     `json:"cvd"`
@@ -110,6 +126,9 @@ type BroadcastMsg struct {
 	BestAskSize    float64     `json:"best_ask_size"`
 	Bids           []BookLevel `json:"bids"`
 	Asks           []BookLevel `json:"asks"`
+	UnfinishedLow  bool        `json:"unfinished_low"`
+	UnfinishedHigh bool        `json:"unfinished_high"`
+	RecentTrades   []TapeTrade `json:"recent_trades,omitempty"`
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -121,10 +140,13 @@ const rowSize = 0.10
 const maxHistory = 500
 const maxSeenTradeIDs = 200000
 const seenTradeIDTrimBatch = 1024
+const maxRecentTrades = 120
 
 type bucketAccum struct {
-	buyVol  float64
-	sellVol float64
+	buyVol     float64
+	sellVol    float64
+	buyTrades  int
+	sellTrades int
 }
 
 type Candle struct {
@@ -172,30 +194,104 @@ func (c *Candle) addTrade(price, vol float64, side string, seq int64) {
 
 	if side == "Buy" {
 		b.buyVol += vol
+		b.buyTrades++
 		c.delta += vol
 		c.buyVol += vol
 		c.buyTrades++
 	} else if side == "Sell" {
 		b.sellVol += vol
+		b.sellTrades++
 		c.delta -= vol
 		c.sellVol += vol
 		c.sellTrades++
 	}
 }
 
-func (c *Candle) toClusters() []Cluster {
+func (c *Candle) footprint() ([]Cluster, bool, bool) {
 	clusters := make([]Cluster, 0, len(c.buckets))
 	for idx, b := range c.buckets {
 		clusters = append(clusters, Cluster{
-			Price:    float64(idx) * rowSize,
-			BuyVol:   round6(b.buyVol),
-			SellVol:  round6(b.sellVol),
-			Delta:    round6(b.buyVol - b.sellVol),
-			TotalVol: round6(b.buyVol + b.sellVol),
+			Price:      float64(idx) * rowSize,
+			BuyVol:     round6(b.buyVol),
+			SellVol:    round6(b.sellVol),
+			Delta:      round6(b.buyVol - b.sellVol),
+			TotalVol:   round6(b.buyVol + b.sellVol),
+			BuyTrades:  b.buyTrades,
+			SellTrades: b.sellTrades,
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Price < clusters[j].Price })
-	return clusters
+	unfinishedLow, unfinishedHigh := annotateClusterSignals(clusters)
+	return clusters, unfinishedLow, unfinishedHigh
+}
+
+func annotateClusterSignals(clusters []Cluster) (bool, bool) {
+	if len(clusters) == 0 {
+		return false, false
+	}
+
+	bullish := make([]bool, len(clusters))
+	bearish := make([]bool, len(clusters))
+
+	for i := range clusters {
+		if i > 0 {
+			below := clusters[i-1]
+			if below.SellVol > 0 && clusters[i].BuyVol >= below.SellVol*3 && clusters[i].BuyVol >= 1 {
+				bullish[i] = true
+				clusters[i].ImbalanceBuy = true
+			}
+		}
+		if i+1 < len(clusters) {
+			above := clusters[i+1]
+			if above.BuyVol > 0 && clusters[i].SellVol >= above.BuyVol*3 && clusters[i].SellVol >= 1 {
+				bearish[i] = true
+				clusters[i].ImbalanceSell = true
+			}
+		}
+	}
+
+	markStackedSide(clusters, bullish, true)
+	markStackedSide(clusters, bearish, false)
+
+	unfinishedLow := clusters[0].BuyVol > 0 && clusters[0].SellVol > 0
+	unfinishedHigh := clusters[len(clusters)-1].BuyVol > 0 && clusters[len(clusters)-1].SellVol > 0
+	return unfinishedLow, unfinishedHigh
+}
+
+func markStackedSide(clusters []Cluster, flags []bool, buySide bool) {
+	streak := make([]int, 0, len(flags))
+	flush := func() {
+		if len(streak) < 3 {
+			streak = streak[:0]
+			return
+		}
+		for _, idx := range streak {
+			if buySide {
+				clusters[idx].StackedBuy = true
+			} else {
+				clusters[idx].StackedSell = true
+			}
+		}
+		streak = streak[:0]
+	}
+
+	for i, ok := range flags {
+		if ok {
+			streak = append(streak, i)
+			continue
+		}
+		flush()
+	}
+	flush()
+}
+
+func copyTapeTrades(src []TapeTrade) []TapeTrade {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]TapeTrade, len(src))
+	copy(dst, src)
+	return dst
 }
 
 func round6(v float64) float64 {
@@ -419,6 +515,7 @@ func main() {
 		seenTradeIDs  []string
 		seenTradeSet  map[string]struct{}
 		completedBars []BroadcastMsg
+		recentTrades  []TapeTrade
 	)
 	seenTradeSet = make(map[string]struct{}, maxSeenTradeIDs)
 
@@ -453,10 +550,23 @@ func main() {
 			lastSeq = seq
 		}
 
+		recentTrades = append(recentTrades, TapeTrade{
+			ID:        tradeID,
+			Price:     round6(price),
+			Volume:    round6(vol),
+			Side:      side,
+			Timestamp: ts,
+			Seq:       seq,
+		})
+		if len(recentTrades) > maxRecentTrades {
+			recentTrades = recentTrades[len(recentTrades)-maxRecentTrades:]
+		}
+
 		openT := candleOpenTime(ts)
 		if candle == nil || openT != candle.openTime {
 			// FIX #1 + #6: Snapshot the closing bar (with full clusters + closed OI delta) into completedBars
 			if candle != nil && candle.hasTick {
+				clusters, unfinishedLow, unfinishedHigh := candle.footprint()
 				closedOIDelta := oi.barClose()
 				bidP, bidS, askP, askS := ob.bestBidAsk()
 				bids, asks := ob.topLevels(15)
@@ -466,7 +576,8 @@ func main() {
 					High:           candle.high,
 					Low:            candle.low,
 					Close:          candle.close,
-					Clusters:       candle.toClusters(),
+					RowSize:        rowSize,
+					Clusters:       clusters,
 					CandleDelta:    round6(candle.delta),
 					CVD:            round6(cvd),
 					BuyTrades:      candle.buyTrades,
@@ -482,6 +593,8 @@ func main() {
 					BestAskSize:    askS,
 					Bids:           bids,
 					Asks:           asks,
+					UnfinishedLow:  unfinishedLow,
+					UnfinishedHigh: unfinishedHigh,
 				}
 				completedBars = append(completedBars, snapshot)
 				// Cap history to last maxHistory bars
@@ -587,6 +700,8 @@ func main() {
 
 			bidP, bidS, askP, askS := ob.bestBidAsk()
 			bids, asks := ob.topLevels(15)
+			clusters, unfinishedLow, unfinishedHigh := candle.footprint()
+			tape := copyTapeTrades(recentTrades)
 
 			msg := BroadcastMsg{
 				CandleOpenTime: candle.openTime,
@@ -594,7 +709,8 @@ func main() {
 				High:           candle.high,
 				Low:            candle.low,
 				Close:          candle.close,
-				Clusters:       candle.toClusters(),
+				RowSize:        rowSize,
+				Clusters:       clusters,
 				CandleDelta:    round6(candle.delta),
 				CVD:            round6(cvd),
 				BuyTrades:      candle.buyTrades,
@@ -610,6 +726,9 @@ func main() {
 				BestAskSize:    askS,
 				Bids:           bids,
 				Asks:           asks,
+				UnfinishedLow:  unfinishedLow,
+				UnfinishedHigh: unfinishedHigh,
+				RecentTrades:   tape,
 			}
 			mu.Unlock()
 
@@ -632,6 +751,19 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		mu.Lock()
 		data, err := json.Marshal(completedBars)
+		mu.Unlock()
+		if err != nil {
+			http.Error(w, "marshal error", 500)
+			return
+		}
+		w.Write(data)
+	})
+
+	http.HandleFunc("/tape", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		data, err := json.Marshal(copyTapeTrades(recentTrades))
 		mu.Unlock()
 		if err != nil {
 			http.Error(w, "marshal error", 500)

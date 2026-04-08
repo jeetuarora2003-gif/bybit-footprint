@@ -9,7 +9,7 @@ const YELLOW = "#ffca28";
 const TEXT = "#6b7280";
 const AXIS_W = 75;
 
-export default function SubPanels({ candles, activeFeatures }) {
+export default function SubPanels({ candles, activeFeatures, recentTrades }) {
   const cvdRef = useRef(null);
   const deltaRef = useRef(null);
   const oiRef = useRef(null);
@@ -61,6 +61,18 @@ export default function SubPanels({ candles, activeFeatures }) {
           <canvas ref={oiRef} className="sub-canvas" />
         </div>
       )}
+      <div className="sub-panel sub-panel--tape" style={{ height: 160 }}>
+        <span className="sub-label">Tape</span>
+        <div className="sub-tape">
+          {(recentTrades || []).slice().reverse().map((trade) => (
+            <div key={`${trade.id || trade.seq}-${trade.timestamp}`} className={`sub-tape-row sub-tape-row--${String(trade.side).toLowerCase()}`}>
+              <span className="sub-tape-time">{fmtTapeTime(trade.timestamp)}</span>
+              <span className="sub-tape-price">{fmtTapePrice(trade.price)}</span>
+              <span className="sub-tape-size">{fmtTapeVolume(trade.volume)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -228,4 +240,27 @@ function fmtAxis(value) {
   if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
   if (abs >= 1) return value.toFixed(1);
   return value.toFixed(3);
+}
+
+function fmtTapeTime(value) {
+  if (!value) return "--:--:--";
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function fmtTapePrice(value) {
+  return Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function fmtTapeVolume(value) {
+  const amount = Number(value || 0);
+  if (amount >= 1000) return `${(amount / 1000).toFixed(2)}K`;
+  if (amount >= 1) return amount.toFixed(3);
+  return amount.toFixed(4);
 }

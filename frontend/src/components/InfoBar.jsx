@@ -78,9 +78,13 @@ export default function InfoBar({ candle, settings }) {
 
       <div className="ib-group">
         <span className="ib-label">Bid:</span>
-        <span className="ib-val ib-green">{current?.best_bid ? fmtPrice(current.best_bid) : "-"}</span>
+        <span className="ib-val ib-green">
+          {current?.best_bid ? `${fmtPrice(current.best_bid)} x ${fmt(current.best_bid_size, 3)}` : "-"}
+        </span>
         <span className="ib-label">Ask:</span>
-        <span className="ib-val ib-red">{current?.best_ask ? fmtPrice(current.best_ask) : "-"}</span>
+        <span className="ib-val ib-red">
+          {current?.best_ask ? `${fmtPrice(current.best_ask)} x ${fmt(current.best_ask_size, 3)}` : "-"}
+        </span>
       </div>
 
       <div className="ib-mode">

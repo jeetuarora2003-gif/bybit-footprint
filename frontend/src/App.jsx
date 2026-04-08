@@ -70,7 +70,7 @@ export default function App() {
     issueViewCommand("reset");
   };
 
-  const { candles, liveCandle, status } = useWebSocket(settings.timeframe, settings.tickSize);
+  const { candles, liveCandle, recentTrades, status } = useWebSocket(settings.timeframe, settings.tickSize);
   const allCandles = liveCandle ? [...candles, liveCandle] : candles;
 
   return (
@@ -102,7 +102,7 @@ export default function App() {
               viewCommand={viewCommand}
             />
           </div>
-          <SubPanels candles={allCandles} activeFeatures={activeFeatures} />
+          <SubPanels candles={allCandles} activeFeatures={activeFeatures} recentTrades={recentTrades} />
         </div>
       </div>
       <StatusBar

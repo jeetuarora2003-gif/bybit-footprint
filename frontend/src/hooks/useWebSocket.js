@@ -59,26 +59,90 @@ function bucketPrice(price, rowSize) {
   return roundPrice(Math.floor((price + Number.EPSILON) / rowSize) * rowSize);
 }
 
+function markStacked(clusters, predicateKey, stackedKey) {
+  let streak = [];
+
+  const flush = () => {
+    if (streak.length >= 3) {
+      streak.forEach((index) => {
+        clusters[index][stackedKey] = true;
+      });
+    }
+    streak = [];
+  };
+
+  clusters.forEach((cluster, index) => {
+    if (cluster[predicateKey]) {
+      streak.push(index);
+      return;
+    }
+    flush();
+  });
+  flush();
+}
+
+function annotateClusters(clusters) {
+  const normalized = (clusters || []).map((cluster) => ({
+    price: roundPrice(Number(cluster.price) || 0),
+    buyVol: round6(Number(cluster.buyVol) || 0),
+    sellVol: round6(Number(cluster.sellVol) || 0),
+    delta: round6(Number(cluster.delta) || ((Number(cluster.buyVol) || 0) - (Number(cluster.sellVol) || 0))),
+    totalVol: round6(Number(cluster.totalVol) || ((Number(cluster.buyVol) || 0) + (Number(cluster.sellVol) || 0))),
+    buyTrades: Number(cluster.buyTrades) || 0,
+    sellTrades: Number(cluster.sellTrades) || 0,
+    imbalance_buy: false,
+    imbalance_sell: false,
+    stacked_buy: false,
+    stacked_sell: false,
+  })).sort((a, b) => a.price - b.price);
+
+  normalized.forEach((cluster, index) => {
+    const below = normalized[index - 1];
+    const above = normalized[index + 1];
+
+    if (below && below.sellVol > 0 && cluster.buyVol >= below.sellVol * 3 && cluster.buyVol >= 1) {
+      cluster.imbalance_buy = true;
+    }
+    if (above && above.buyVol > 0 && cluster.sellVol >= above.buyVol * 3 && cluster.sellVol >= 1) {
+      cluster.imbalance_sell = true;
+    }
+  });
+
+  markStacked(normalized, "imbalance_buy", "stacked_buy");
+  markStacked(normalized, "imbalance_sell", "stacked_sell");
+  return normalized;
+}
+
 function normalizeClusters(clusters, rowSize) {
   const buckets = new Map();
 
   for (const cluster of clusters || []) {
     const price = bucketPrice(Number(cluster.price), rowSize);
-    const prev = buckets.get(price) ?? { price, buyVol: 0, sellVol: 0, delta: 0, totalVol: 0 };
+    const prev = buckets.get(price) ?? {
+      price,
+      buyVol: 0,
+      sellVol: 0,
+      delta: 0,
+      totalVol: 0,
+      buyTrades: 0,
+      sellTrades: 0,
+    };
     prev.buyVol += Number(cluster.buyVol) || 0;
     prev.sellVol += Number(cluster.sellVol) || 0;
+    prev.buyTrades += Number(cluster.buyTrades) || 0;
+    prev.sellTrades += Number(cluster.sellTrades) || 0;
     buckets.set(price, prev);
   }
 
-  return [...buckets.values()]
-    .map((cluster) => ({
-      price: cluster.price,
-      buyVol: round6(cluster.buyVol),
-      sellVol: round6(cluster.sellVol),
-      delta: round6(cluster.buyVol - cluster.sellVol),
-      totalVol: round6(cluster.buyVol + cluster.sellVol),
-    }))
-    .sort((a, b) => a.price - b.price);
+  return annotateClusters([...buckets.values()].map((cluster) => ({
+    price: cluster.price,
+    buyVol: round6(cluster.buyVol),
+    sellVol: round6(cluster.sellVol),
+    delta: round6(cluster.buyVol - cluster.sellVol),
+    totalVol: round6(cluster.buyVol + cluster.sellVol),
+    buyTrades: cluster.buyTrades,
+    sellTrades: cluster.sellTrades,
+  })));
 }
 
 function mergeIntoFrame(frame, candle, rowSize) {
@@ -100,7 +164,10 @@ function mergeIntoFrame(frame, candle, rowSize) {
   frame.best_ask_size = Number(candle.best_ask_size) || frame.best_ask_size;
   frame.bids = candle.bids || frame.bids;
   frame.asks = candle.asks || frame.asks;
+  frame.row_size = Number(candle.row_size) || frame.row_size || rowSize;
   frame.clusters = normalizeClusters([...frame.clusters, ...(candle.clusters || [])], rowSize);
+  frame.unfinished_low = Boolean(frame.clusters[0]?.buyVol > 0 && frame.clusters[0]?.sellVol > 0);
+  frame.unfinished_high = Boolean(frame.clusters.at(-1)?.buyVol > 0 && frame.clusters.at(-1)?.sellVol > 0);
 }
 
 function makeFrame(candle, openTime, rowSize) {
@@ -119,6 +186,9 @@ function makeFrame(candle, openTime, rowSize) {
     buy_trades: 0,
     sell_trades: 0,
     oi_delta: 0,
+    row_size: Number(candle.row_size) || rowSize,
+    unfinished_low: false,
+    unfinished_high: false,
   };
   mergeIntoFrame(frame, candle, rowSize);
   return frame;
@@ -155,6 +225,7 @@ function aggregateCandles(sourceCandles, timeframe, tickMultiplier) {
 export default function useWebSocket(timeframe = "1m", tickSize = "1") {
   const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
+  const [recentTrades, setRecentTrades] = useState([]);
   const [status, setStatus] = useState("disconnected");
 
   const wsRef = useRef(null);
@@ -179,6 +250,9 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     for (const candle of list) {
       if (candle?.candle_open_time == null) continue;
       baseCandlesRef.current.set(Number(candle.candle_open_time), candle);
+      if (Array.isArray(candle?.recent_trades)) {
+        setRecentTrades(candle.recent_trades);
+      }
     }
 
     const keys = [...baseCandlesRef.current.keys()].sort((a, b) => a - b);
@@ -202,12 +276,25 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     }
   }, [upsertBaseCandles]);
 
+  const fetchTape = useCallback(async () => {
+    try {
+      const res = await fetch(`${BASE_HTTP}/tape`);
+      const tape = await res.json();
+      if (Array.isArray(tape)) {
+        setRecentTrades(tape);
+      }
+    } catch (error) {
+      console.warn("[tape] not available:", error.message);
+    }
+  }, []);
+
   const connect = useCallback(() => {
     if (stoppedRef.current) return;
     if (wsRef.current) wsRef.current.close();
 
     setStatus("connecting");
     fetchHistory();
+    fetchTape();
 
     const ws = new WebSocket(BASE_WS);
     wsRef.current = ws;
@@ -229,7 +316,7 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
       setStatus("disconnected");
       reconnectRef.current = setTimeout(() => connectRef.current(), 2000);
     };
-  }, [fetchHistory, upsertBaseCandles]);
+  }, [fetchHistory, fetchTape, upsertBaseCandles]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -252,5 +339,5 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     publishAggregated();
   }, [timeframe, tickSize, publishAggregated]);
 
-  return { candles, liveCandle, status };
+  return { candles, liveCandle, recentTrades, status };
 }
