@@ -7,8 +7,10 @@ const TEXT_COLOR = "#8b95a5";
 const TEXT_BRIGHT = "#c8d0dc";
 const GREEN = "#26a69a";
 const RED = "#ef5350";
+const BUY = "#42a5f5";
 const GREEN_FILL = "rgba(38,166,154,0.25)";
 const RED_FILL = "rgba(239,83,80,0.25)";
+const BUY_FILL = "rgba(66,165,245,0.25)";
 const POC_COLOR = "#ef5350";
 const VA_COLOR = "rgba(38,166,154,0.08)";
 const CROSSHAIR = "rgba(255,255,255,0.18)";
@@ -62,7 +64,11 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
     mouse: { x: -1, y: -1 },
     dragging: false,
     dragStartX: 0,
+    dragStartY: 0,
     dragStartOffset: 0,
+    dragPriceMin: 0,
+    dragPriceMax: 100,
+    dragChartH: 0,
     autoScroll: true,
     autoScaleY: true,
     priceMin: 0,
@@ -112,13 +118,32 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
       const state = stateRef.current;
       const rect = canvas.getBoundingClientRect();
       const mouseX = event.clientX - rect.left;
-      if (mouseX > rect.width - PRICE_AXIS_W) return;
-      const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
-      const idxUnderMouse = (state.offsetX + mouseX) / state.candleW;
-      state.candleW = clamp(state.candleW * zoomFactor, MIN_CANDLE_W, MAX_CANDLE_W);
-      state.offsetX = idxUnderMouse * state.candleW - mouseX;
-      state.autoScroll = false;
-      state.velocityX = 0;
+      const mouseY = event.clientY - rect.top;
+      const chartH = rect.height - TIME_AXIS_H;
+      const overPriceAxis = mouseX >= rect.width - PRICE_AXIS_W;
+      const overTimeAxis = mouseY >= chartH;
+
+      if (event.shiftKey) {
+        state.offsetX += event.deltaY * 0.6;
+        state.autoScroll = false;
+        state.velocityX = 0;
+        return;
+      }
+
+      if ((overPriceAxis || event.ctrlKey) && mouseY >= 0 && mouseY <= chartH) {
+        const zoomFactor = event.deltaY > 0 ? 1.08 : 0.92;
+        zoomPriceRange(state, chartH, mouseY, zoomFactor);
+        return;
+      }
+
+      if (overTimeAxis || mouseX <= rect.width - PRICE_AXIS_W) {
+        const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+        const idxUnderMouse = (state.offsetX + mouseX) / state.candleW;
+        state.candleW = clamp(state.candleW * zoomFactor, MIN_CANDLE_W, MAX_CANDLE_W);
+        state.offsetX = idxUnderMouse * state.candleW - mouseX;
+        state.autoScroll = false;
+        state.velocityX = 0;
+      }
     };
     canvas.addEventListener("wheel", handler, { passive: false });
     return () => canvas.removeEventListener("wheel", handler);
@@ -147,6 +172,14 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
       const newOffsetX = state.dragStartOffset - (event.clientX - state.dragStartX);
       if (dt > 0) state.velocityX = (newOffsetX - state.offsetX) / dt;
       state.offsetX = newOffsetX;
+      const dy = event.clientY - state.dragStartY;
+      if (Math.abs(dy) > 2 && state.dragChartH > 0) {
+        const range = state.dragPriceMax - state.dragPriceMin;
+        const shift = (dy / state.dragChartH) * range;
+        state.priceMin = state.dragPriceMin + shift;
+        state.priceMax = state.dragPriceMax + shift;
+        state.autoScaleY = false;
+      }
       state.lastDragTime = now;
       state.autoScroll = false;
     }
@@ -183,7 +216,11 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
 
     state.dragging = true;
     state.dragStartX = event.clientX;
+    state.dragStartY = event.clientY;
     state.dragStartOffset = state.offsetX;
+    state.dragPriceMin = state.priceMin;
+    state.dragPriceMax = state.priceMax;
+    state.dragChartH = rect.height - TIME_AXIS_H;
     state.lastDragTime = performance.now();
     state.velocityX = 0;
   }, []);
@@ -515,6 +552,17 @@ function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x) {
   }
 }
 
+function zoomPriceRange(state, chartH, mouseY, zoomFactor) {
+  const range = (state.priceMax - state.priceMin) || 1;
+  const clampedY = clamp(mouseY, 0, chartH);
+  const anchorRatio = 1 - (clampedY / chartH);
+  const anchorPrice = state.priceMin + anchorRatio * range;
+  const nextRange = range * zoomFactor;
+  state.priceMin = anchorPrice - anchorRatio * nextRange;
+  state.priceMax = anchorPrice + (1 - anchorRatio) * nextRange;
+  state.autoScaleY = false;
+}
+
 function drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, axisW) {
   const { mouse } = state;
   if (mouse.x <= 0 || mouse.x >= chartW || mouse.y <= 0 || mouse.y >= chartH) return;
@@ -671,7 +719,7 @@ function drawCandle(
       const buyF = cluster.buyVol / maxV;
       ctx.fillStyle = RED_FILL;
       ctx.fillRect(centerX - sellF * barMax, rowTop, sellF * barMax, Math.max(rowH - 0.5, 1));
-      ctx.fillStyle = GREEN_FILL;
+      ctx.fillStyle = BUY_FILL;
       ctx.fillRect(centerX, rowTop, buyF * barMax, Math.max(rowH - 0.5, 1));
     } else if (settings.clusterMode === "volumeCluster") {
       const intensity = Math.min(cluster.totalVol / maxV, 1);
@@ -685,10 +733,13 @@ function drawCandle(
       ctx.fillRect(centerX - candleW / 2 + 1, rowTop, candleW - 2, Math.max(rowH - 0.5, 1));
     } else if (settings.clusterMode === "deltaLadder") {
       const half = (candleW - 4) / 2;
-      ctx.fillStyle = `rgba(239,83,80,${0.06 + Math.min(cluster.sellVol / maxV, 1) * 0.45})`;
-      ctx.fillRect(centerX - half - 1, rowTop, half, Math.max(rowH - 0.5, 1));
-      ctx.fillStyle = `rgba(38,166,154,${0.06 + Math.min(cluster.buyVol / maxV, 1) * 0.45})`;
-      ctx.fillRect(centerX + 1, rowTop, half, Math.max(rowH - 0.5, 1));
+      if (cluster.buyVol >= cluster.sellVol) {
+        ctx.fillStyle = `rgba(66,165,245,${0.06 + Math.min(cluster.buyVol / maxV, 1) * 0.45})`;
+        ctx.fillRect(centerX + 1, rowTop, half, Math.max(rowH - 0.5, 1));
+      } else {
+        ctx.fillStyle = `rgba(239,83,80,${0.06 + Math.min(cluster.sellVol / maxV, 1) * 0.45})`;
+        ctx.fillRect(centerX - half - 1, rowTop, half, Math.max(rowH - 0.5, 1));
+      }
     }
 
     drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW);
@@ -735,53 +786,99 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW)
   ctx.font = `${fontSize}px 'JetBrains Mono', monospace`;
   ctx.textBaseline = "middle";
   const yMid = rowTop + rowH / 2;
+  const leftText = fmtFootprintValue(cluster.sellVol);
+  const rightText = fmtFootprintValue(cluster.buyVol);
 
   if (dataView === "volume") {
     ctx.fillStyle = TEXT_BRIGHT;
     ctx.textAlign = "center";
-    ctx.fillText(fmtV(cluster.totalVol), centerX, yMid);
+    ctx.fillText(fmtFootprintValue(cluster.totalVol), centerX, yMid);
     return;
   }
 
   if (dataView === "delta") {
-    ctx.fillStyle = cluster.delta >= 0 ? GREEN : RED;
+    ctx.fillStyle = cluster.delta >= 0 ? BUY : RED;
     ctx.textAlign = "center";
-    ctx.fillText(fmtV(cluster.delta), centerX, yMid);
+    ctx.fillText(fmtFootprintValue(cluster.delta, { signed: true }), centerX, yMid);
     return;
   }
 
   if (dataView === "bidAsk") {
     ctx.fillStyle = RED;
     ctx.textAlign = "right";
-    ctx.fillText(fmtV(cluster.sellVol), centerX - 2, yMid);
-    ctx.fillStyle = "#555";
-    ctx.textAlign = "center";
-    ctx.fillText("x", centerX, yMid);
-    ctx.fillStyle = GREEN;
+    if (leftText) ctx.fillText(leftText, centerX - 3, yMid);
+    ctx.fillStyle = BUY;
     ctx.textAlign = "left";
-    ctx.fillText(fmtV(cluster.buyVol), centerX + 2, yMid);
+    if (rightText) ctx.fillText(rightText, centerX + 3, yMid);
     return;
   }
 
   if (dataView === "imbalance") {
-    if (cluster.imbalance_buy || cluster.imbalance_sell) {
-      ctx.fillStyle = cluster.imbalance_buy ? GREEN : RED;
-      ctx.globalAlpha = 0.18;
-      ctx.fillRect(centerX - candleW / 2 + 1, rowTop, candleW - 2, rowH);
-      ctx.globalAlpha = 1;
-    }
     ctx.fillStyle = RED;
     ctx.textAlign = "right";
-    ctx.fillText(fmtV(cluster.sellVol), centerX - 2, yMid);
-    ctx.fillStyle = GREEN;
+    drawImbalanceTextCell(ctx, {
+      text: leftText,
+      align: "right",
+      x: centerX - 3,
+      y: yMid,
+      rowTop,
+      rowH,
+      side: "sell",
+      active: cluster.imbalance_sell,
+      stacked: cluster.stacked_sell,
+      candleW,
+      fontSize,
+    });
+    ctx.fillStyle = BUY;
     ctx.textAlign = "left";
-    ctx.fillText(fmtV(cluster.buyVol), centerX + 2, yMid);
+    drawImbalanceTextCell(ctx, {
+      text: rightText,
+      align: "left",
+      x: centerX + 3,
+      y: yMid,
+      rowTop,
+      rowH,
+      side: "buy",
+      active: cluster.imbalance_buy,
+      stacked: cluster.stacked_buy,
+      candleW,
+      fontSize,
+    });
   }
+}
+
+function drawImbalanceTextCell(ctx, {
+  text,
+  align,
+  x,
+  y,
+  rowTop,
+  rowH,
+  side,
+  active,
+  stacked,
+  candleW,
+  fontSize,
+}) {
+  if (!text) return;
+
+  const color = side === "buy" ? BUY : RED;
+  const width = Math.min(candleW / 2 - 4, Math.max(14, text.length * (fontSize * 0.62)));
+  const boxX = align === "right" ? x - width - 2 : x - 2;
+
+  if (active) {
+    ctx.fillStyle = stacked ? "rgba(18,18,24,0.94)" : "rgba(18,18,24,0.78)";
+    ctx.fillRect(boxX, rowTop + 1, width + 4, Math.max(2, rowH - 2));
+  }
+
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.fillText(text, x, y);
 }
 
 function drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH) {
   if (cluster.imbalance_buy) {
-    ctx.fillStyle = cluster.stacked_buy ? "rgba(16,185,129,0.95)" : "rgba(16,185,129,0.55)";
+    ctx.fillStyle = cluster.stacked_buy ? "rgba(66,165,245,0.95)" : "rgba(66,165,245,0.55)";
     ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
   if (cluster.imbalance_sell) {
@@ -942,4 +1039,18 @@ function fmtV(value) {
   if (abs >= 1) return value.toFixed(2);
   if (abs >= 0.01) return value.toFixed(3);
   return value.toFixed(4);
+}
+
+function fmtFootprintValue(value, options = {}) {
+  const numeric = Number(value) || 0;
+  if (Math.abs(numeric) < 0.000001) return "";
+
+  const { signed = false } = options;
+  let rendered = fmtV(Math.abs(numeric));
+  rendered = rendered.replace(/\.0k$/, "k");
+  rendered = rendered.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+
+  if (signed && numeric > 0) return `+${rendered}`;
+  if (numeric < 0) return `-${rendered}`;
+  return rendered;
 }
