@@ -81,13 +81,13 @@ const FEATURE_TABS = [
 ];
 
 const MODE_PRESETS = {
-  void: { dataView: "none", candleStyle: "colorCandle" },
-  volumeProfile: { dataView: "volume", candleStyle: "borderedCandle" },
-  deltaProfile: { dataView: "delta", candleStyle: "borderedCandle" },
-  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle" },
-  volumeCluster: { dataView: "volume", candleStyle: "colorCandle" },
-  deltaCluster: { dataView: "delta", candleStyle: "colorCandle" },
-  deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle" },
+  void: { dataView: "none", candleStyle: "colorCandle", showVA: false, showPOC: false, showDOM: false },
+  volumeProfile: { dataView: "volume", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false },
+  deltaProfile: { dataView: "delta", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false },
+  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: true },
+  volumeCluster: { dataView: "volume", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false },
+  deltaCluster: { dataView: "delta", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false },
+  deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: false, showPOC: true, showDOM: true },
 };
 
 function Dropdown({ label, value, options, onChange, wide }) {
@@ -143,8 +143,11 @@ export default function Toolbar({
   const applyClusterMode = (value) => {
     updateSetting("clusterMode", value);
     const preset = MODE_PRESETS[value];
-    if (preset?.dataView) updateSetting("dataView", preset.dataView);
-    if (preset?.candleStyle) updateSetting("candleStyle", preset.candleStyle);
+    if (preset) {
+      Object.entries(preset).forEach(([key, presetValue]) => {
+        updateSetting(key, presetValue);
+      });
+    }
   };
 
   return (

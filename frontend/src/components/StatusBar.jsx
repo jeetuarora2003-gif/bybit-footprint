@@ -1,12 +1,10 @@
 import "./StatusBar.css";
-
-function fmt(value) {
-  if (value == null) return "-";
-  const abs = Math.abs(value);
-  if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  return value.toFixed(1);
-}
+import {
+  formatCompactValue,
+  formatFootprintValue,
+  formatPrice,
+  formatSignedCompactValue,
+} from "../utils/exoFormat";
 
 export default function StatusBar({
   crosshairData,
@@ -23,26 +21,43 @@ export default function StatusBar({
     second: "2-digit",
   });
   const hoveredPrice = crosshairData?.hoveredPrice ?? crosshairData?.close ?? crosshairData?.best_bid ?? crosshairData?.best_ask ?? null;
+  const hoveredCluster = crosshairData?.hoveredCluster ?? null;
 
   return (
     <div className="status-bar">
       <div className="stb-left">
         {crosshairData ? (
           <span className="stb-info mono">
-            Hover: {hoveredPrice != null ? hoveredPrice.toFixed(1) : "-"}
+            Hover: {hoveredPrice != null ? formatPrice(hoveredPrice) : "-"}
           </span>
         ) : (
           <span className="stb-info">Crosshair</span>
         )}
+        {hoveredCluster && (
+          <>
+            <span className="stb-sep">|</span>
+            <span className="stb-info mono">
+              Cell: <span style={{ color: "var(--red)" }}>{formatFootprintValue(hoveredCluster.sellVol) || "0"}</span>
+              {" x "}
+              <span style={{ color: "#42a5f5" }}>{formatFootprintValue(hoveredCluster.buyVol) || "0"}</span>
+            </span>
+            <span className="stb-sep">|</span>
+            <span className="stb-info">
+              Delta: <span style={{ color: hoveredCluster.delta >= 0 ? "#42a5f5" : "var(--red)" }}>
+                {formatSignedCompactValue(hoveredCluster.delta, 2)}
+              </span>
+            </span>
+          </>
+        )}
         <span className="stb-sep">|</span>
         <span className="stb-info">
-          CVD: <span style={{ color: liveCandle?.cvd >= 0 ? "var(--green)" : "var(--red)" }}>
-            {liveCandle ? fmt(liveCandle.cvd) : "-"}
+          CVD: <span style={{ color: liveCandle?.cvd >= 0 ? "#42a5f5" : "var(--red)" }}>
+            {liveCandle ? formatSignedCompactValue(liveCandle.cvd, 2) : "-"}
           </span>
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">
-          OI: {liveCandle?.oi ? fmt(liveCandle.oi) : "-"}
+          OI: {liveCandle?.oi ? formatCompactValue(liveCandle.oi, 1) : "-"}
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">

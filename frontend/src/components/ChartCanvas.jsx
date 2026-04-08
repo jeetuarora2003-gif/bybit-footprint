@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import "./ChartCanvas.css";
+import {
+  formatCompactValue,
+  formatFootprintValue as formatFootprintCell,
+  formatPrice as formatChartPrice,
+} from "../utils/exoFormat";
 
 const BG = "#0e1117";
 const GRID_COLOR = "rgba(255,255,255,0.04)";
@@ -25,7 +30,9 @@ const TIME_AXIS_H = 26;
 const MIN_CANDLE_W = 6;
 const MAX_CANDLE_W = 200;
 const PROFILE_MAX_W = 80;
-const DOM_MAX_W = 128;
+const DOM_MAX_W = 156;
+const DOM_PRICE_COL_W = 46;
+const DOM_SIDE_W = (DOM_MAX_W - DOM_PRICE_COL_W) / 2;
 
 export default function ChartCanvas({ candles, settings, activeFeatures, onCrosshairMove, viewCommand }) {
   const containerRef = useRef(null);
@@ -82,6 +89,7 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
     lastDragTime: 0,
     hoveredCandle: null,
     hoveredPrice: null,
+    hoveredCluster: null,
     lastCanvasW: 0,
     lastCanvasH: 0,
   });
@@ -188,7 +196,10 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
       crosshairCbRef.current({
         ...state.hoveredCandle,
         hoveredPrice: state.hoveredPrice,
+        hoveredCluster: state.hoveredCluster,
       });
+    } else if (crosshairCbRef.current) {
+      crosshairCbRef.current(null);
     }
   }, []);
 
@@ -391,17 +402,22 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
   const i2x = (index) => rightPad + (index - startIdx) * state.candleW - (state.offsetX % state.candleW) + state.candleW / 2;
 
   const mouseX = state.mouse.x;
-  if (mouseX > 0 && mouseX < chartW && visible.length > 0) {
-    const hoverIdx = Math.floor((state.offsetX + mouseX - rightPad) / state.candleW);
-    const clamped = Math.max(0, Math.min(candles.length - 1, hoverIdx));
-    state.hoveredCandle = candles[clamped] || null;
-    if (state.mouse.y > 0 && state.mouse.y < chartH) {
-      state.hoveredPrice = pMin + (1 - state.mouse.y / chartH) * priceRange;
+    if (mouseX > 0 && mouseX < chartW && visible.length > 0) {
+      const hoverIdx = Math.floor((state.offsetX + mouseX - rightPad) / state.candleW);
+      const clamped = Math.max(0, Math.min(candles.length - 1, hoverIdx));
+      state.hoveredCandle = candles[clamped] || null;
+      if (state.mouse.y > 0 && state.mouse.y < chartH) {
+        state.hoveredPrice = pMin + (1 - state.mouse.y / chartH) * priceRange;
+        state.hoveredCluster = findHoveredCluster(state.hoveredCandle, state.hoveredPrice, rowSize);
+      } else {
+        state.hoveredPrice = null;
+        state.hoveredCluster = null;
+      }
+    } else {
+      state.hoveredCandle = null;
+      state.hoveredPrice = null;
+      state.hoveredCluster = null;
     }
-  } else {
-    state.hoveredCandle = null;
-    state.hoveredPrice = null;
-  }
 
   ctx.fillStyle = BG;
   ctx.fillRect(0, 0, width, height);
@@ -446,7 +462,7 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
 
   const lastVisible = visible.at(-1);
   if (settings.showDOM && lastVisible?.bids?.length) {
-    drawDOM(ctx, lastVisible.bids, lastVisible.asks, chartW, chartH, p2y, rowSize);
+    drawDOM(ctx, lastVisible, chartW, chartH, p2y, rowSize);
   }
 
   drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x);
@@ -497,12 +513,19 @@ function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visib
 
   ctx.fillStyle = TEXT_COLOR;
   ctx.font = "10px 'JetBrains Mono', monospace";
-  ctx.textAlign = "center";
+  ctx.textAlign = "right";
   ctx.textBaseline = "middle";
 
   for (let price = Math.ceil(pMin / pStep) * pStep; price <= pMax; price += pStep) {
     const y = p2y(price);
-    if (y > 8 && y < chartH - 8) ctx.fillText(price.toFixed(1), chartW + axisW / 2, y);
+    if (y > 8 && y < chartH - 8) {
+      ctx.beginPath();
+      ctx.moveTo(chartW, y + 0.5);
+      ctx.lineTo(chartW + 5, y + 0.5);
+      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.stroke();
+      ctx.fillText(formatChartPrice(price), chartW + axisW - 8, y);
+    }
   }
 
   if (visible.length === 0) return;
@@ -522,7 +545,8 @@ function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visib
   ctx.fillRect(chartW, y - 9, axisW, 18);
   ctx.fillStyle = "#fff";
   ctx.font = "bold 10px 'JetBrains Mono', monospace";
-  ctx.fillText(last.close.toFixed(1), chartW + axisW / 2, y);
+  ctx.textAlign = "center";
+  ctx.fillText(formatChartPrice(last.close), chartW + axisW / 2, y);
 }
 
 function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x) {
@@ -588,7 +612,7 @@ function drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, axisW) {
   ctx.font = "10px 'JetBrains Mono', monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(hoveredPrice.toFixed(1), chartW + axisW / 2, mouse.y);
+  ctx.fillText(formatChartPrice(hoveredPrice), chartW + axisW / 2, mouse.y);
 }
 
 function drawCandle(
@@ -1001,40 +1025,84 @@ function drawSessionProfile(ctx, visible, chartH, p2y, rowSize) {
   }
 }
 
-function drawDOM(ctx, bids, asks, chartW, chartH, p2y, rowSize) {
+function drawDOM(ctx, candle, chartW, chartH, p2y, rowSize) {
+  const bids = candle.bids || [];
+  const asks = candle.asks || [];
   let maxSize = 0;
   for (const bid of bids) if (bid.size > maxSize) maxSize = bid.size;
   for (const ask of asks) if (ask.size > maxSize) maxSize = ask.size;
   if (maxSize === 0) return;
 
-  const rowH = Math.max(Math.abs(p2y(0) - p2y(rowSize)) - 0.5, 2);
+  const domRowSize = Number(candle.row_size) || rowSize;
+  const rowH = Math.max(Math.abs(p2y(0) - p2y(domRowSize)) - 0.5, 2);
   const domLeft = chartW - DOM_MAX_W;
+  const bidRight = domLeft + DOM_SIDE_W;
+  const priceLeft = bidRight;
+  const askLeft = priceLeft + DOM_PRICE_COL_W;
 
   ctx.fillStyle = "rgba(12,15,21,0.60)";
   ctx.fillRect(domLeft, 0, DOM_MAX_W, chartH);
+  ctx.fillStyle = "rgba(7,10,15,0.88)";
+  ctx.fillRect(priceLeft, 0, DOM_PRICE_COL_W, chartH);
   ctx.strokeStyle = "rgba(255,255,255,0.05)";
   ctx.beginPath();
   ctx.moveTo(domLeft, 0);
   ctx.lineTo(domLeft, chartH);
+  ctx.moveTo(priceLeft, 0);
+  ctx.lineTo(priceLeft, chartH);
+  ctx.moveTo(askLeft, 0);
+  ctx.lineTo(askLeft, chartH);
   ctx.stroke();
 
-  drawDOMSide(ctx, asks, maxSize, domLeft, chartW, chartH, p2y, rowH, RED);
-  drawDOMSide(ctx, bids, maxSize, domLeft, chartW, chartH, p2y, rowH, GREEN);
+  drawDOMPriceColumn(ctx, bids, asks, candle, priceLeft, chartH, p2y, rowH, domRowSize);
+  drawDOMSide(ctx, bids, maxSize, domLeft, bidRight, chartH, p2y, rowH, domRowSize, BUY, false);
+  drawDOMSide(ctx, asks, maxSize, askLeft, chartW, chartH, p2y, rowH, domRowSize, RED, true);
 }
 
-function drawDOMSide(ctx, levels, maxSize, domLeft, chartW, chartH, p2y, rowH, color) {
-  const isAsk = color === RED;
+function drawDOMPriceColumn(ctx, bids, asks, candle, priceLeft, chartH, p2y, rowH, rowSize) {
+  const prices = new Set();
+  bids.forEach((level) => prices.add(level.price));
+  asks.forEach((level) => prices.add(level.price));
+
+  const sortedPrices = [...prices].sort((a, b) => b - a);
+  for (const price of sortedPrices) {
+    const y = p2y(price + rowSize / 2);
+    if (y < -rowH || y > chartH + rowH) continue;
+
+    const isBestBid = price === candle.best_bid;
+    const isBestAsk = price === candle.best_ask;
+    const isTradePrice = Math.abs(price - candle.close) < rowSize / 2;
+
+    if (isTradePrice) {
+      ctx.fillStyle = "rgba(37,99,235,0.16)";
+      ctx.fillRect(priceLeft + 1, y - rowH / 2, DOM_PRICE_COL_W - 2, rowH);
+    } else if (isBestBid || isBestAsk) {
+      ctx.fillStyle = isBestBid ? "rgba(66,165,245,0.12)" : "rgba(239,83,80,0.12)";
+      ctx.fillRect(priceLeft + 1, y - rowH / 2, DOM_PRICE_COL_W - 2, rowH);
+    }
+
+    ctx.fillStyle = isTradePrice ? "#ffffff" : TEXT_BRIGHT;
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(formatChartPrice(price), priceLeft + DOM_PRICE_COL_W / 2, y);
+  }
+}
+
+function drawDOMSide(ctx, levels, maxSize, colLeft, colRight, chartH, p2y, rowH, rowSize, color, isAsk) {
   for (const level of levels) {
-    const y = p2y(level.price);
+    const y = p2y(level.price + rowSize / 2);
     if (y < 0 || y > chartH) continue;
-    const width = (level.size / maxSize) * (DOM_MAX_W - 12);
-    ctx.fillStyle = isAsk ? "rgba(239,83,80,0.20)" : "rgba(38,166,154,0.20)";
-    ctx.fillRect(chartW - width, y - rowH / 2, width, rowH);
+    const columnWidth = colRight - colLeft - 6;
+    const width = (level.size / maxSize) * columnWidth;
+    ctx.fillStyle = isAsk ? "rgba(239,83,80,0.20)" : "rgba(66,165,245,0.20)";
+    const x = isAsk ? colLeft + 3 : colRight - width - 3;
+    ctx.fillRect(x, y - rowH / 2, width, rowH);
     ctx.fillStyle = color;
     ctx.font = "9px 'JetBrains Mono', monospace";
-    ctx.textAlign = "right";
+    ctx.textAlign = isAsk ? "left" : "right";
     ctx.textBaseline = "middle";
-    ctx.fillText(fmtV(level.size), chartW - 4, y);
+    ctx.fillText(formatCompactValue(level.size, 2), isAsk ? colLeft + 4 : colRight - 4, y);
   }
 }
 
@@ -1086,26 +1154,13 @@ function niceStep(range) {
   return 10 * magnitude;
 }
 
-function fmtV(value) {
-  const abs = Math.abs(value);
-  if (abs >= 1000) return `${(value / 1000).toFixed(1)}k`;
-  if (abs >= 100) return value.toFixed(0);
-  if (abs >= 10) return value.toFixed(1);
-  if (abs >= 1) return value.toFixed(2);
-  if (abs >= 0.01) return value.toFixed(3);
-  return value.toFixed(4);
+function fmtFootprintValue(value, options = {}) {
+  return formatFootprintCell(value, options);
 }
 
-function fmtFootprintValue(value, options = {}) {
-  const numeric = Number(value) || 0;
-  if (Math.abs(numeric) < 0.000001) return "";
-
-  const { signed = false } = options;
-  let rendered = fmtV(Math.abs(numeric));
-  rendered = rendered.replace(/\.0k$/, "k");
-  rendered = rendered.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
-
-  if (signed && numeric > 0) return `+${rendered}`;
-  if (numeric < 0) return `-${rendered}`;
-  return rendered;
+function findHoveredCluster(candle, hoveredPrice, defaultRowSize) {
+  if (!candle?.clusters?.length || hoveredPrice == null) return null;
+  const rowSize = Number(candle.row_size) || defaultRowSize;
+  const bucketPrice = Math.floor((hoveredPrice + Number.EPSILON) / rowSize) * rowSize;
+  return candle.clusters.find((cluster) => Math.abs(cluster.price - bucketPrice) < rowSize / 10) ?? null;
 }
