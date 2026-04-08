@@ -1,211 +1,45 @@
-# Bybit Footprint Chart
+# Bybit Footprint Engine
 
-Real-time BTCUSDT footprint chart with volume delta — built on Bybit V5 WebSocket.
+A high-performance, professional-grade cryptocurrency orderflow aggregation terminal natively built for Bybit V5.
 
-![Dashboard](https://img.shields.io/badge/status-production--ready-brightgreen)
-![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
-![lightweight-charts](https://img.shields.io/badge/lightweight--charts-v4-blueviolet)
+This platform bridges the gap between raw data streams and institutional-level insights by executing tick-precision aggregations directly over WebSocket, delivering Exocharts/TradingView-tier visualizations entirely in the browser using a custom-built HTML5 Canvas Engine.
 
----
+## Core Architecture
 
-## Architecture
+The architecture consists of an immensely fast, decoupled backend/frontend system:
 
-```
-┌─────────────────────┐     ┌──────────────────────────┐     ┌────────────────────────┐
-│  Bybit V5 WSS       │────▶│  Go Backend (:8080)      │────▶│  React Frontend (:5173)│
-│  publicTrade.BTCUSDT │     │  • Worker pool (4 workers)│     │  • lightweight-charts  │
-│                     │     │  • Exp backoff reconnect  │     │  • Canvas overlay      │
-│                     │     │  • 500ms debounce         │     │  • CVD + Delta panels  │
-└─────────────────────┘     └──────────────────────────┘     └────────────────────────┘
-```
+1. **Go Aggregation Backend**: Engineered in Go 1.23, the server subscribes directly to Bybit's V5 `publicTrade`, `orderbook.50`, and `tickers` WebSockets. It acts as a highly optimized pipeline—deduplicating ticks, strictly aligning order sequence numbers, aggregating Volume Deltas, tracking continuous Open Interest (OI), and broadcasting sanitized DOM states to the frontend client at low latencies.
+2. **React/HTML5 Canvas Frontend**: Built purely out of custom raw `Canvas 2D` API draw loops powered by Vite + React. This completely detaches from the heavy DOM, leveraging hardware acceleration to flawlessly render tens of thousands of complex footprint clusters without stuttering. It uses sub-pixel kinetic physics for unbounded, 60fps TradingView-style navigation and zooming.
 
-**Data pipeline:**
-1. Go backend connects to `wss://stream.bybit.com/v5/public/linear`
-2. Subscribes to `publicTrade.BTCUSDT`
-3. Worker pool parses JSON, extracts trades (field `S` = taker side, `v` = size, `p` = price)
-4. Aggregates into 1-minute candles with volume-at-price clusters (`rowSize = 0.5`)
-5. Tracks session CVD (Cumulative Volume Delta) as running total
-6. Broadcasts current candle state every 500ms to local WebSocket `ws://localhost:8080`
-7. Frontend renders OHLC candles, cluster overlay, CVD line, and delta histogram
+## Features
 
----
+- **Advanced Footprint Clusters**: Deep inspection into real-time order matching. Supports Data Modes for raw Volume, Delta, Imbalance, and Bid-Ask distributions.
+- **Custom Shading Toggles**: Toggle footprint row aesthetic styling via Adaptive Scaling or Current Rotation profiles directly from the toolbar.
+- **TPO Market Profiles & Value Areas**: Advanced volume distribution metrics overlaying the price action—identifying the POC (Point of Control) and generating TPO distributions completely dynamically.
+- **Real-Time Orderbook (DOM)**: Renders live liquidity directly alongside the price-axis dynamically.
+- **Interactive UI Terminal**: Exocharts-styled professional workspace loaded with dedicated component tabs (TSize, vWAP, Rekt, FPBS) and custom configuration panels.
+- **Continuous Session Stats**: A live tracking ribbon displaying continuous Cumulative Volume Delta (CVD), Open Interest (OI) divergence, real-time bid:ask ratios, and sub-panel histogram integrations.
 
-## Run Locally
+## Running the Application
 
-### Prerequisites
+Because this architecture isolates the engine processing from the display client, both layers must be spun up:
 
-- [Go 1.23+](https://go.dev/dl/)
-- [Node.js 18+](https://nodejs.org/)
-
-### Backend
-
+### Backend Installation
+Ensure you have Go installed on your machine.
 ```bash
 cd backend
-go build -o footprint.exe .
-./footprint.exe
-# ▶  Footprint WS server listening on :8080
+go build -o footprint .
+./footprint
 ```
 
-### Frontend
-
+### Frontend Installation
+You will need Node installed.
 ```bash
 cd frontend
 npm install
 npm run dev
-# ➜  Local:   http://localhost:5173/
 ```
+Navigate to `http://localhost:5173/` in your browser.
 
-Open **http://localhost:5173** — the dashboard connects to `ws://localhost:8080` automatically.
-
----
-
-## Run via Docker
-
-```bash
-# Build
-docker build -t bybit-footprint .
-
-# Run
-docker run -p 8080:8080 -p 3000:3000 bybit-footprint
-```
-
-- **UI:** http://localhost:3000
-- **WebSocket:** ws://localhost:8080
-
-> **Note:** The frontend inside Docker connects to `ws://localhost:8080`. If
-> you're accessing the UI from outside the container, both ports must be
-> forwarded (`-p 8080:8080 -p 3000:3000`).
-
----
-
-## specs.md Contract
-
-The file `specs.md.txt` in the project root defines the **exact data contract**
-between the Go backend and the React frontend:
-
-### Bybit Inbound Schema
-
-Each push from Bybit's `publicTrade.BTCUSDT` stream is an envelope with a
-`data` array. Key trade fields:
-
-| Field | Type   | Description                              |
-|-------|--------|------------------------------------------|
-| `T`   | number | Execution timestamp (ms)                 |
-| `S`   | string | Taker side: `"Buy"` or `"Sell"`          |
-| `v`   | string | Trade size (quantity) as string           |
-| `p`   | string | Trade price as string                    |
-
-### Volume Delta Formula
-
-```
-Volume Delta = Σ(taker buy volume) − Σ(taker sell volume)
-```
-
-- `S == "Buy"` → add to buy volume, CVD += vol
-- `S == "Sell"` → add to sell volume, CVD -= vol
-
-### Price Bucketing
-
-```
-rowSize   = 0.5
-rowIndex  = floor(price / rowSize)
-bucketPrice = rowIndex × rowSize
-```
-
-### Backend → Frontend Output (every 500ms)
-
-```json
-{
-  "candle_open_time": 1672304460000,
-  "open":  16575.00,
-  "high":  16580.00,
-  "low":   16573.50,
-  "close": 16578.50,
-  "clusters": [
-    { "price": 16573.5, "buyVol": 1.2, "sellVol": 3.4, "delta": -2.2, "totalVol": 4.6 },
-    { "price": 16574.0, "buyVol": 5.0, "sellVol": 2.1, "delta":  2.9, "totalVol": 7.1 }
-  ],
-  "candle_delta": 3.2,
-  "cvd": 45.7
-}
-```
-
-| Field              | Type     | Description                                       |
-|--------------------|----------|---------------------------------------------------|
-| `candle_open_time` | int64    | Floored minute timestamp (ms)                     |
-| `open/high/low/close` | float | Standard OHLC for the 1-min candle               |
-| `clusters`         | array    | Volume-at-price rows sorted by price ascending    |
-| `clusters[].price` | float    | Canonical bucket price                            |
-| `clusters[].buyVol` / `sellVol` | float | Accumulated buy/sell volume at this price |
-| `clusters[].delta` | float    | `buyVol - sellVol`                                |
-| `clusters[].totalVol` | float | `buyVol + sellVol`                                |
-| `candle_delta`     | float    | Sum of delta across all clusters                  |
-| `cvd`              | float    | Session-level cumulative volume delta              |
-
----
-
-## Stress Test
-
-A self-contained stress test simulates 2000 ticks/sec for 10 seconds:
-
-```bash
-cd backend/stress_test
-go run .
-```
-
-Results on 12-core machine:
-```
-✅ PASS: Broadcast debounce OK (2.10 msg/sec ≤ 2)
-✅ PASS: Throughput 2000 ticks/sec (target 2000)
-✅ PASS: Memory 0.16 MB (< 50 MB budget)
-🎉 ALL CHECKS PASSED — pipeline handles 2000 ticks/sec
-```
-
----
-
-## Production Hardening
-
-| Feature                    | Implementation                                    |
-|----------------------------|---------------------------------------------------|
-| Worker pool                | 4 goroutines consuming from a 256-slot job channel |
-| Exponential backoff        | 1s → 2s → 4s → 8s → 16s → 30s, max 5 retries    |
-| Broadcast debounce         | 500ms `time.Ticker` — max 2 messages/sec          |
-| Ring buffer                | 8192-slot circular buffer absorbs write bursts     |
-| Non-blocking job dispatch  | Drops messages if worker pool is saturated         |
-| Auto-reconnect (frontend)  | WebSocket hook reconnects on close after 2s        |
-
----
-
-## Project Structure
-
-```
-bybit/
-├── backend/
-│   ├── main.go              # Go server (Bybit WS → aggregator → local WS)
-│   ├── go.mod / go.sum
-│   ├── footprint.exe         # Built binary
-│   └── stress_test/          # Self-contained throughput benchmark
-│       └── main.go
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx           # Root component
-│   │   ├── hooks/
-│   │   │   └── useWebSocket.js  # Auto-reconnect WS + candle history
-│   │   └── components/
-│   │       ├── FootprintChart.jsx / .css  # OHLC + canvas overlay + CVD + histogram
-│   │       ├── StatusBar.jsx / .css       # OHLC + delta + CVD info bar
-│   │       └── ConnectionPill.jsx / .css  # Fixed connection status pill
-│   ├── index.html
-│   └── package.json
-├── Dockerfile                # Multi-stage (Go + React → Alpine)
-├── .dockerignore
-├── specs.md.txt              # Data contract specification
-└── README.md                 # This file
-```
-
----
-
-## License
-
-MIT
+## Philosophy
+Standard financial chart libraries (like `lightweight-charts` or raw `chart.js`) restrict traders from drawing granular nested cell clusters inside individual candlesticks. This engine relies on entirely custom aggregation functions and manual render loops to give the builder ultimate control over how data is processed, styled, and visualized.
