@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
   showDOM: true,
   vaPercent: 70,
   shadingMode: "adaptive",
-  shortNumbers: false,
+  shortNumbers: true,
 };
 
 const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
@@ -33,7 +33,7 @@ const CLASSIC_PRESET = {
   showVA: true,
   showDOM: true,
   shadingMode: "adaptive",
-  shortNumbers: false,
+  shortNumbers: true,
 };
 
 const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
@@ -97,7 +97,7 @@ export default function App() {
     issueViewCommand("reset");
   };
 
-  const { candles, liveCandle, recentTrades, depthHistory, status } = useWebSocket(settings.timeframe, settings.tickSize);
+  const { candles, liveCandle, depthHistory, status } = useWebSocket(settings.timeframe, settings.tickSize);
   const allCandles = useMemo(() => (liveCandle ? [...candles, liveCandle] : candles), [candles, liveCandle]);
   const replayMaxIndex = Math.max(0, allCandles.length - 1);
   const effectiveReplayIndex = replay.enabled
@@ -109,16 +109,6 @@ export default function App() {
   }, [allCandles, effectiveReplayIndex, replay.enabled]);
   const displayedLiveCandle = replay.enabled ? displayedCandles.at(-1) ?? null : liveCandle;
   const infoCandle = crosshairData ?? displayedLiveCandle;
-  const replayFrameMs = TIMEFRAME_MS[settings.timeframe] ?? 60000;
-  const replayCutoff = displayedLiveCandle?.candle_open_time != null
-    ? Number(displayedLiveCandle.candle_open_time) + replayFrameMs
-    : Number.MAX_SAFE_INTEGER;
-  const displayedTape = useMemo(() => (
-    replay.enabled
-      ? recentTrades.filter((trade) => Number(trade.timestamp) <= replayCutoff).slice(-150)
-      : recentTrades
-  ), [recentTrades, replay.enabled, replayCutoff]);
-
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
 
@@ -213,7 +203,7 @@ export default function App() {
               viewCommand={viewCommand}
             />
           </div>
-          <SubPanels candles={displayedCandles} activeFeatures={activeFeatures} recentTrades={displayedTape} />
+          <SubPanels candles={displayedCandles} activeFeatures={activeFeatures} />
         </div>
       </div>
       <StatusBar

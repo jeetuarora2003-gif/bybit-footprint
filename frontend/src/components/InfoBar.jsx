@@ -1,10 +1,10 @@
 import "./InfoBar.css";
 import {
   formatFootprintValue,
-  formatOriginalValue,
   formatPrice,
   formatRange,
-  formatSignedOriginalValue,
+  formatShortOriginalValue,
+  formatSignedShortOriginalValue,
 } from "../utils/exoFormat";
 import { summarizeCandleImbalance } from "../utils/orderflow";
 
@@ -41,10 +41,10 @@ export default function InfoBar({ candle, settings }) {
 
       <div className="ib-group">
         <span className="ib-label">Vol:</span>
-        <span className="ib-val">{current ? formatOriginalValue(current.total_volume, 3) : "-"}</span>
+        <span className="ib-val">{current ? formatShortOriginalValue(current.total_volume, 1) : "-"}</span>
         <span className="ib-label">Delta:</span>
         <span className="ib-val" style={{ color: current?.candle_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-          {current ? formatSignedOriginalValue(current.candle_delta, 3) : "-"}
+          {current ? formatSignedShortOriginalValue(current.candle_delta, 1) : "-"}
         </span>
       </div>
 
@@ -69,10 +69,10 @@ export default function InfoBar({ candle, settings }) {
 
       <div className="ib-group">
         <span className="ib-label">OI:</span>
-        <span className="ib-val">{current?.oi != null ? formatOriginalValue(current.oi, 3) : "-"}</span>
+        <span className="ib-val">{current?.oi != null ? formatShortOriginalValue(current.oi, 1) : "-"}</span>
         <span className="ib-label">OI d:</span>
         <span className="ib-val" style={{ color: current?.oi_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-          {current?.oi_delta != null ? formatSignedOriginalValue(current.oi_delta, 3) : "-"}
+          {current?.oi_delta != null ? formatSignedShortOriginalValue(current.oi_delta, 1) : "-"}
         </span>
       </div>
 
@@ -81,11 +81,11 @@ export default function InfoBar({ candle, settings }) {
       <div className="ib-group">
         <span className="ib-label">Bid:</span>
         <span className="ib-val" style={{ color: "#42a5f5" }}>
-          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatOriginalValue(current.best_bid_size, 3)}` : "-"}
+          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatShortOriginalValue(current.best_bid_size, 1)}` : "-"}
         </span>
         <span className="ib-label">Ask:</span>
         <span className="ib-val ib-red">
-          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatOriginalValue(current.best_ask_size, 3)}` : "-"}
+          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatShortOriginalValue(current.best_ask_size, 1)}` : "-"}
         </span>
       </div>
 

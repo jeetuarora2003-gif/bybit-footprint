@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
 import "./SubPanels.css";
 import {
-  formatCompactValue,
-  formatOriginalValue,
-  formatSignedOriginalValue,
+  formatShortOriginalValue,
+  formatSignedShortOriginalValue,
 } from "../utils/exoFormat";
 
 const BG = "#0b0e14";
@@ -14,9 +13,8 @@ const YELLOW = "#ffca28";
 const TEXT = "#6b7280";
 const AXIS_W = 75;
 
-export default function SubPanels({ candles, activeFeatures, recentTrades }) {
+export default function SubPanels({ candles, activeFeatures }) {
   const cvdRef = useRef(null);
-  const deltaRef = useRef(null);
   const oiRef = useRef(null);
   const candlesRef = useRef(candles);
 
@@ -25,7 +23,6 @@ export default function SubPanels({ candles, activeFeatures, recentTrades }) {
   }, [candles]);
 
   const showCVD = true;
-  const showDelta = true;
   const showOI = activeFeatures?.has?.("oi");
 
   useEffect(() => {
@@ -35,7 +32,6 @@ export default function SubPanels({ candles, activeFeatures, recentTrades }) {
       const current = candlesRef.current;
       if (current.length > 0) {
         if (showCVD) drawCVDPanel(cvdRef.current, current);
-        if (showDelta) drawDeltaPanel(deltaRef.current, current);
         if (showOI) drawOIPanel(oiRef.current, current);
       }
       requestAnimationFrame(loop);
@@ -44,7 +40,7 @@ export default function SubPanels({ candles, activeFeatures, recentTrades }) {
     return () => {
       running = false;
     };
-  }, [showCVD, showDelta, showOI]);
+  }, [showCVD, showOI]);
 
   return (
     <div className="sub-panels">
@@ -54,30 +50,12 @@ export default function SubPanels({ candles, activeFeatures, recentTrades }) {
           <canvas ref={cvdRef} className="sub-canvas" />
         </div>
       )}
-      {showDelta && (
-        <div className="sub-panel" style={{ height: 50 }}>
-          <span className="sub-label">Delta Vol</span>
-          <canvas ref={deltaRef} className="sub-canvas" />
-        </div>
-      )}
       {showOI && (
         <div className="sub-panel" style={{ height: 50 }}>
           <span className="sub-label">OI</span>
           <canvas ref={oiRef} className="sub-canvas" />
         </div>
       )}
-      <div className="sub-panel sub-panel--tape" style={{ height: 160 }}>
-        <span className="sub-label">Tape</span>
-        <div className="sub-tape">
-          {(recentTrades || []).slice().reverse().map((trade) => (
-            <div key={`${trade.id || trade.seq}-${trade.timestamp}`} className={`sub-tape-row sub-tape-row--${String(trade.side).toLowerCase()}`}>
-              <span className="sub-tape-time">{fmtTapeTime(trade.timestamp)}</span>
-              <span className="sub-tape-price">{fmtTapePrice(trade.price)}</span>
-              <span className="sub-tape-size">{fmtTapeVolume(trade.volume)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -139,57 +117,6 @@ function drawCVDPanel(canvas, candles) {
   ctx.fillText(fmtAxis(values.at(-1) ?? 0), chartW + 4, 2);
 }
 
-function drawDeltaPanel(canvas, candles) {
-  if (!canvas) return;
-  const parent = canvas.parentElement;
-  const width = parent.clientWidth;
-  const height = parent.clientHeight;
-  if (!width || !height) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, width, height);
-
-  const chartW = width - AXIS_W;
-  if (candles.length === 0) return;
-
-  const deltas = candles.map((candle) => candle.candle_delta ?? 0);
-  const absMax = Math.max(1, ...deltas.map(Math.abs));
-  const barW = Math.max(2, chartW / candles.length);
-  const midY = height / 2;
-
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, midY);
-  ctx.lineTo(chartW, midY);
-  ctx.stroke();
-
-  for (let index = 0; index < candles.length; index += 1) {
-    const delta = deltas[index];
-    const barH = (Math.abs(delta) / absMax) * (midY - 2);
-    const x = index * barW + 1;
-    const bw = Math.max(1, barW - 2);
-
-    ctx.fillStyle = delta >= 0 ? GREEN : RED;
-    if (delta >= 0) ctx.fillRect(x, midY - barH, bw, barH);
-    else ctx.fillRect(x, midY, bw, barH);
-  }
-
-  ctx.fillStyle = TEXT;
-  ctx.font = "9px 'JetBrains Mono', monospace";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.fillText(fmtAxis(deltas.at(-1) ?? 0), chartW + 4, 2);
-}
-
 function drawOIPanel(canvas, candles) {
   if (!canvas) return;
   const parent = canvas.parentElement;
@@ -241,27 +168,7 @@ function drawOIPanel(canvas, candles) {
 
 function fmtAxis(value) {
   const numeric = Number(value) || 0;
-  if (numeric > 0) return formatOriginalValue(numeric, 3);
-  if (numeric < 0) return formatSignedOriginalValue(numeric, 3);
+  if (numeric > 0) return formatShortOriginalValue(numeric, 1);
+  if (numeric < 0) return formatSignedShortOriginalValue(numeric, 1);
   return "0";
-}
-
-function fmtTapeTime(value) {
-  if (!value) return "--:--:--";
-  return new Date(value).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function fmtTapePrice(value) {
-  return Number(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  });
-}
-
-function fmtTapeVolume(value) {
-  return formatCompactValue(value);
 }
