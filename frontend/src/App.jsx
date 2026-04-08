@@ -108,6 +108,7 @@ export default function App() {
     return allCandles.slice(0, effectiveReplayIndex + 1);
   }, [allCandles, effectiveReplayIndex, replay.enabled]);
   const displayedLiveCandle = replay.enabled ? displayedCandles.at(-1) ?? null : liveCandle;
+  const infoCandle = crosshairData ?? displayedLiveCandle;
   const replayFrameMs = TIMEFRAME_MS[settings.timeframe] ?? 60000;
   const replayCutoff = displayedLiveCandle?.candle_open_time != null
     ? Number(displayedLiveCandle.candle_open_time) + replayFrameMs
@@ -193,7 +194,7 @@ export default function App() {
         onStepReplay={stepReplay}
         onCycleReplaySpeed={cycleReplaySpeed}
       />
-      <InfoBar candle={displayedLiveCandle} settings={settings} />
+      <InfoBar candle={infoCandle} settings={settings} />
       <div className="app-body">
         <Sidebar
           settings={settings}

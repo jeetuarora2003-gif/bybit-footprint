@@ -117,6 +117,28 @@ func (ps *persistenceStore) AppendDepth(item DepthSnapshot, retained []DepthSnap
 	return nil
 }
 
+func (ps *persistenceStore) ReplaceBars(retained []BroadcastMsg) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	if err := rewriteJSONLines(ps.barsPath, retained); err != nil {
+		return err
+	}
+	ps.barEntries = len(retained)
+	return nil
+}
+
+func (ps *persistenceStore) ReplaceTrades(retained []TapeTrade) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	if err := rewriteJSONLines(ps.tapePath, retained); err != nil {
+		return err
+	}
+	ps.tapeEntries = len(retained)
+	return nil
+}
+
 func appendJSONLine(path string, value any) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {

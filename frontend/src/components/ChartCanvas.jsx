@@ -5,6 +5,7 @@ import {
   formatFootprintValue as formatFootprintCell,
   formatPrice as formatChartPrice,
 } from "../utils/exoFormat";
+import { summarizeCandleImbalance } from "../utils/orderflow";
 
 const BG = "#0e1117";
 const GRID_COLOR = "rgba(255,255,255,0.04)";
@@ -108,6 +109,7 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
     velocityX: 0,
     lastDragTime: 0,
     hoveredCandle: null,
+    hoveredIndex: null,
     hoveredPrice: null,
     hoveredCluster: null,
     lastCanvasW: 0,
@@ -213,6 +215,22 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
       state.autoScroll = false;
     }
 
+    const chartW = rect.width - PRICE_AXIS_W;
+    const chartH = rect.height - TIME_AXIS_H;
+    const totalW = candlesRef.current.length * state.candleW;
+    const rightPad = totalW < chartW ? chartW - totalW : 0;
+    const priceRange = (state.priceMax - state.priceMin) || 1;
+    updateHoverState(
+      state,
+      candlesRef.current,
+      chartW,
+      chartH,
+      rightPad,
+      priceRange,
+      state.priceMin,
+      getRowSize(settingsRef.current),
+    );
+
     if (crosshairCbRef.current && state.hoveredCandle) {
       crosshairCbRef.current({
         ...state.hoveredCandle,
@@ -263,6 +281,16 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
     canvasRef.current?.releasePointerCapture(event.pointerId);
   }, []);
 
+  const onLeave = useCallback(() => {
+    const state = stateRef.current;
+    clearHoverState(state);
+    state.mouse.x = -1;
+    state.mouse.y = -1;
+    if (crosshairCbRef.current) {
+      crosshairCbRef.current(null);
+    }
+  }, []);
+
   const onDoubleClick = useCallback((event) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -288,6 +316,7 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
         onPointerDown={onDown}
         onPointerUp={onUp}
         onPointerCancel={onUp}
+        onPointerLeave={onLeave}
         onDoubleClick={onDoubleClick}
       />
       <button
@@ -422,28 +451,16 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
   const p2y = (price) => chartH - ((price - pMin) / priceRange) * chartH;
   const i2x = (index) => rightPad + (index - startIdx) * state.candleW - (state.offsetX % state.candleW) + state.candleW / 2;
 
-  const mouseX = state.mouse.x;
-    if (mouseX > 0 && mouseX < chartW && visible.length > 0) {
-      const hoverIdx = Math.floor((state.offsetX + mouseX - rightPad) / state.candleW);
-      const clamped = Math.max(0, Math.min(candles.length - 1, hoverIdx));
-      state.hoveredCandle = candles[clamped] || null;
-      if (state.mouse.y > 0 && state.mouse.y < chartH) {
-        state.hoveredPrice = pMin + (1 - state.mouse.y / chartH) * priceRange;
-        state.hoveredCluster = findHoveredCluster(state.hoveredCandle, state.hoveredPrice, rowSize);
-      } else {
-        state.hoveredPrice = null;
-        state.hoveredCluster = null;
-      }
-    } else {
-      state.hoveredCandle = null;
-      state.hoveredPrice = null;
-      state.hoveredCluster = null;
-    }
+  updateHoverState(state, candles, chartW, chartH, rightPad, priceRange, pMin, rowSize);
 
   ctx.fillStyle = BG;
   ctx.fillRect(0, 0, width, height);
 
   drawGrid(ctx, chartW, pMin, pMax, niceStep(priceRange), p2y);
+
+  if (state.hoveredIndex != null) {
+    drawHoveredCandleHighlight(ctx, state.hoveredIndex, startIdx, chartW, chartH, state.candleW, i2x);
+  }
 
   let maxClusterVol = 0.001;
   let maxClusterDelta = 0.001;
@@ -864,6 +881,10 @@ function drawCandle(
     drawUnfinishedAuction(ctx, candle, clusters, centerX, candleW, candleRowSize, p2y);
   }
 
+  if (featureFlags.showImbalanceMarkers) {
+    drawCandleImbalanceBadge(ctx, candle, centerX, yHigh, yTop, candleW, bodyW, settings.shortNumbers);
+  }
+
   if (featureFlags.showTradeCount || featureFlags.showTradeSize || featureFlags.showCandleStats) {
     drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags, settings.shortNumbers);
   }
@@ -998,6 +1019,42 @@ function drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH) {
     ctx.fillStyle = cluster.stacked_sell ? "rgba(66,165,245,0.95)" : "rgba(66,165,245,0.55)";
     ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
+}
+
+function drawCandleImbalanceBadge(ctx, candle, centerX, yHigh, yTop, candleW, bodyW, shortNumbers) {
+  const imbalance = summarizeCandleImbalance(candle);
+  if (!imbalance) return;
+
+  const color = imbalance.stacked ? "rgba(239,83,80,0.98)" : "rgba(239,83,80,0.88)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = candleW >= 18 ? 1.25 : 1;
+  ctx.strokeRect(centerX - bodyW / 2 - 1.5, yTop - 1.5, bodyW + 3, Math.max(4, Math.abs(yTop - yHigh) + 3));
+
+  if (candleW < 16) {
+    ctx.fillStyle = color;
+    ctx.fillRect(centerX - 2, Math.max(2, yHigh - 7), 4, 4);
+    return;
+  }
+
+  const label = candleW >= 26
+    ? fmtFootprintValue(imbalance.value, { shortNumbers }) || "IMB"
+    : "IMB";
+  const fontSize = candleW >= 42 ? 9 : 8;
+  ctx.font = `bold ${fontSize}px 'JetBrains Mono', monospace`;
+  const paddingX = 4;
+  const boxWidth = Math.max(18, Math.min(candleW + 10, ctx.measureText(label).width + paddingX * 2));
+  const boxX = centerX - boxWidth / 2;
+  const boxY = Math.max(2, yHigh - 14);
+
+  ctx.fillStyle = "rgba(14,17,23,0.9)";
+  ctx.fillRect(boxX, boxY, boxWidth, 12);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(boxX + 0.5, boxY + 0.5, boxWidth - 1, 11);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, centerX, boxY + 6);
 }
 
 function drawUnfinishedAuction(ctx, candle, clusters, centerX, candleW, rowSize, p2y) {
@@ -1285,6 +1342,19 @@ function drawVWAP(ctx, visible, startIdx, p2y, i2x) {
   if (started) ctx.stroke();
 }
 
+function drawHoveredCandleHighlight(ctx, hoveredIndex, startIdx, chartW, chartH, candleW, i2x) {
+  if (hoveredIndex < startIdx) return;
+  const centerX = i2x(hoveredIndex);
+  const left = centerX - candleW / 2;
+  if (left > chartW || left + candleW < 0) return;
+
+  ctx.fillStyle = "rgba(255,255,255,0.03)";
+  ctx.fillRect(left, 0, candleW, chartH);
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(left + 0.5, 0.5, Math.max(1, candleW - 1), Math.max(1, chartH - 1));
+}
+
 function getClusterFontSize(rowH, candleW, text, dataView) {
   const minFont = 6;
   const maxFont = 11;
@@ -1315,6 +1385,35 @@ function niceStep(range) {
 
 function fmtFootprintValue(value, options = {}) {
   return formatFootprintCell(value, options);
+}
+
+function clearHoverState(state) {
+  state.hoveredCandle = null;
+  state.hoveredIndex = null;
+  state.hoveredPrice = null;
+  state.hoveredCluster = null;
+}
+
+function updateHoverState(state, candles, chartW, chartH, rightPad, priceRange, pMin, rowSize) {
+  const mouseX = state.mouse.x;
+  if (mouseX <= 0 || mouseX >= chartW || candles.length === 0) {
+    clearHoverState(state);
+    return;
+  }
+
+  const hoverIdx = Math.floor((state.offsetX + mouseX - rightPad) / state.candleW);
+  const clamped = Math.max(0, Math.min(candles.length - 1, hoverIdx));
+  state.hoveredIndex = clamped;
+  state.hoveredCandle = candles[clamped] || null;
+
+  if (state.mouse.y > 0 && state.mouse.y < chartH) {
+    state.hoveredPrice = pMin + (1 - state.mouse.y / chartH) * priceRange;
+    state.hoveredCluster = findHoveredCluster(state.hoveredCandle, state.hoveredPrice, rowSize);
+    return;
+  }
+
+  state.hoveredPrice = null;
+  state.hoveredCluster = null;
 }
 
 function findHoveredCluster(candle, hoveredPrice, defaultRowSize) {

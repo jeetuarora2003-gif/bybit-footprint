@@ -577,6 +577,7 @@ func main() {
 		recentDepth   []DepthSnapshot
 	)
 	seenTradeSet = make(map[string]struct{}, maxSeenTradeIDs)
+	restClient := &http.Client{Timeout: 10 * time.Second}
 
 	if loadedBars, loadedTrades, loadedDepth, err := store.Load(); err != nil {
 		log.Printf("[store] load failed, starting empty: %v", err)
@@ -584,16 +585,51 @@ func main() {
 		completedBars = loadedBars
 		recentTrades = loadedTrades
 		recentDepth = loadedDepth
-		if lastBar := lastCompletedBar(completedBars); lastBar != nil {
-			cvd = lastBar.CVD
-			oi.current = lastBar.OI
-			oi.prevBar = lastBar.OI
-		}
 		log.Printf("[store] loaded %d bars, %d tape prints, %d depth snapshots", len(completedBars), len(recentTrades), len(recentDepth))
 	}
 
 	candleOpenTime := func(tsMs int64) int64 {
 		return tsMs - (tsMs % 60000)
+	}
+
+	if len(completedBars) > 0 {
+		earliestTs := completedBars[0].CandleOpenTime
+		if snapshots, err := fetchBybitOpenInterestHistory(restClient, "BTCUSDT", earliestTs); err != nil {
+			log.Printf("[bybit] OI history seed failed: %v", err)
+		} else if applyOfficialOpenInterest(completedBars, snapshots) {
+			if err := store.ReplaceBars(completedBars); err != nil {
+				log.Printf("[store] bar rewrite failed: %v", err)
+			}
+		}
+	}
+
+	if lastBar := lastCompletedBar(completedBars); lastBar != nil {
+		cvd = lastBar.CVD
+		oi.current = lastBar.OI
+		oi.prevBar = lastBar.OI
+	}
+
+	if seededTrades, err := fetchBybitRecentTrades(restClient, "BTCUSDT", 1000); err != nil {
+		log.Printf("[bybit] recent trade seed failed: %v", err)
+	} else {
+		recentTrades = mergeTapeTrades(recentTrades, seededTrades)
+		if err := store.ReplaceTrades(recentTrades); err != nil {
+			log.Printf("[store] tape rewrite failed: %v", err)
+		}
+	}
+
+	seedSeenTradeIDs(recentTrades, seenTradeSet, &seenTradeIDs)
+
+	replayAfterTs := int64(0)
+	if lastBar := lastCompletedBar(completedBars); lastBar != nil {
+		replayAfterTs = lastBar.CandleOpenTime + int64(time.Minute/time.Millisecond)
+	}
+	rebuildCurrentFromTape(recentTrades, replayAfterTs, candleOpenTime, &candle, &cvd, &lastSeq)
+
+	if currentOI, err := fetchBybitCurrentOpenInterest(restClient, "BTCUSDT"); err != nil {
+		log.Printf("[bybit] current OI seed failed: %v", err)
+	} else if currentOI > 0 {
+		oi.update(currentOI)
 	}
 
 	// FIX #5: processTrade is called only from single-threaded tradeCh goroutine — no races

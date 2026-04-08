@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
 import "./SubPanels.css";
-import { formatCompactValue, formatSignedCompactValue } from "../utils/exoFormat";
+import {
+  formatCompactValue,
+  formatOriginalValue,
+  formatSignedOriginalValue,
+} from "../utils/exoFormat";
 
 const BG = "#0b0e14";
 const GREEN = "#26a69a";
@@ -237,8 +241,8 @@ function drawOIPanel(canvas, candles) {
 
 function fmtAxis(value) {
   const numeric = Number(value) || 0;
-  if (numeric > 0) return formatCompactValue(numeric);
-  if (numeric < 0) return formatSignedCompactValue(numeric);
+  if (numeric > 0) return formatOriginalValue(numeric, 3);
+  if (numeric < 0) return formatSignedOriginalValue(numeric, 3);
   return "0";
 }
 

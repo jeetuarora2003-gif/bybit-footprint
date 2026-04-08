@@ -27,6 +27,22 @@ function formatShortWholeNumber(value) {
   return formatWholeNumber(value);
 }
 
+export function formatOriginalValue(value, digits = 3) {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  return Number(value).toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+  });
+}
+
+export function formatSignedOriginalValue(value, digits = 3) {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  const numeric = Number(value);
+  const formatted = formatOriginalValue(Math.abs(numeric), digits);
+  if (numeric > 0) return `+${formatted}`;
+  if (numeric < 0) return `-${formatted}`;
+  return "0";
+}
+
 export function formatCompactValue(value) {
   const lots = toDisplayLots(value);
   if (lots == null) return "-";

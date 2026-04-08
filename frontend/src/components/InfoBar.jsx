@@ -1,10 +1,12 @@
 import "./InfoBar.css";
 import {
-  formatCompactValue,
+  formatFootprintValue,
+  formatOriginalValue,
   formatPrice,
   formatRange,
-  formatSignedCompactValue,
+  formatSignedOriginalValue,
 } from "../utils/exoFormat";
+import { summarizeCandleImbalance } from "../utils/orderflow";
 
 const CLUSTER_LABELS = {
   void: "Void",
@@ -18,6 +20,7 @@ const CLUSTER_LABELS = {
 
 export default function InfoBar({ candle, settings }) {
   const current = candle;
+  const imbalance = summarizeCandleImbalance(current);
 
   return (
     <div className="info-bar">
@@ -38,10 +41,19 @@ export default function InfoBar({ candle, settings }) {
 
       <div className="ib-group">
         <span className="ib-label">Vol:</span>
-        <span className="ib-val">{current ? formatCompactValue(current.total_volume, 2) : "-"}</span>
+        <span className="ib-val">{current ? formatOriginalValue(current.total_volume, 3) : "-"}</span>
         <span className="ib-label">Delta:</span>
         <span className="ib-val" style={{ color: current?.candle_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-          {current ? formatSignedCompactValue(current.candle_delta, 2) : "-"}
+          {current ? formatSignedOriginalValue(current.candle_delta, 3) : "-"}
+        </span>
+      </div>
+
+      <div className="ib-sep" />
+
+      <div className="ib-group">
+        <span className="ib-label">Imb:</span>
+        <span className="ib-val" style={{ color: imbalance ? "var(--red)" : "#6b7280" }}>
+          {imbalance ? formatFootprintValue(imbalance.value, { shortNumbers: settings?.shortNumbers }) : "-"}
         </span>
       </div>
 
@@ -57,10 +69,10 @@ export default function InfoBar({ candle, settings }) {
 
       <div className="ib-group">
         <span className="ib-label">OI:</span>
-        <span className="ib-val">{current?.oi ? formatCompactValue(current.oi, 1) : "-"}</span>
+        <span className="ib-val">{current?.oi != null ? formatOriginalValue(current.oi, 3) : "-"}</span>
         <span className="ib-label">OI d:</span>
         <span className="ib-val" style={{ color: current?.oi_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-          {current?.oi_delta ? formatSignedCompactValue(current.oi_delta, 2) : "-"}
+          {current?.oi_delta != null ? formatSignedOriginalValue(current.oi_delta, 3) : "-"}
         </span>
       </div>
 
@@ -69,11 +81,11 @@ export default function InfoBar({ candle, settings }) {
       <div className="ib-group">
         <span className="ib-label">Bid:</span>
         <span className="ib-val" style={{ color: "#42a5f5" }}>
-          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatCompactValue(current.best_bid_size, 2)}` : "-"}
+          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatOriginalValue(current.best_bid_size, 3)}` : "-"}
         </span>
         <span className="ib-label">Ask:</span>
         <span className="ib-val ib-red">
-          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatCompactValue(current.best_ask_size, 2)}` : "-"}
+          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatOriginalValue(current.best_ask_size, 3)}` : "-"}
         </span>
       </div>
 

@@ -1,9 +1,9 @@
 import "./StatusBar.css";
 import {
-  formatCompactValue,
   formatFootprintValue,
+  formatOriginalValue,
   formatPrice,
-  formatSignedCompactValue,
+  formatSignedOriginalValue,
 } from "../utils/exoFormat";
 
 const CLUSTER_LABELS = {
@@ -38,6 +38,7 @@ export default function StatusBar({
   });
   const hoveredPrice = crosshairData?.hoveredPrice ?? crosshairData?.close ?? crosshairData?.best_bid ?? crosshairData?.best_ask ?? null;
   const hoveredCluster = crosshairData?.hoveredCluster ?? null;
+  const referenceCandle = crosshairData ?? liveCandle;
   const replayTime = replay?.enabled && liveCandle?.candle_open_time
     ? new Date(Number(liveCandle.candle_open_time)).toLocaleTimeString([], {
       hour: "2-digit",
@@ -67,20 +68,20 @@ export default function StatusBar({
             <span className="stb-sep">|</span>
             <span className="stb-info">
               Delta: <span style={{ color: hoveredCluster.delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-                {formatSignedCompactValue(hoveredCluster.delta, 2)}
+                {formatSignedOriginalValue(hoveredCluster.delta, 3)}
               </span>
             </span>
           </>
         )}
         <span className="stb-sep">|</span>
         <span className="stb-info">
-          CVD: <span style={{ color: liveCandle?.cvd >= 0 ? "#42a5f5" : "var(--red)" }}>
-            {liveCandle ? formatSignedCompactValue(liveCandle.cvd, 2) : "-"}
+          CVD: <span style={{ color: referenceCandle?.cvd >= 0 ? "#42a5f5" : "var(--red)" }}>
+            {referenceCandle ? formatSignedOriginalValue(referenceCandle.cvd, 3) : "-"}
           </span>
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">
-          OI: {liveCandle?.oi ? formatCompactValue(liveCandle.oi, 1) : "-"}
+          OI: {referenceCandle?.oi != null ? formatOriginalValue(referenceCandle.oi, 3) : "-"}
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">
