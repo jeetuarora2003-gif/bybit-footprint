@@ -158,6 +158,7 @@ const maxSeenTradeIDs = 200000
 const seenTradeIDTrimBatch = 1024
 const maxRecentTrades = 1500
 const maxRecentDepthSnapshots = 12000
+const imbalanceThreshold = 2.5
 
 type bucketAccum struct {
 	buyVol     float64
@@ -253,16 +254,16 @@ func annotateClusterSignals(clusters []Cluster) (bool, bool) {
 	for i := range clusters {
 		if i > 0 {
 			below := clusters[i-1]
-			if below.SellVol > 0 && clusters[i].BuyVol >= below.SellVol*3 && clusters[i].BuyVol >= 1 {
-				bullish[i] = true
-				clusters[i].ImbalanceBuy = true
+			if below.BuyVol > 0 && clusters[i].SellVol >= below.BuyVol*imbalanceThreshold && clusters[i].SellVol >= 1 {
+				bearish[i] = true
+				clusters[i].ImbalanceSell = true
 			}
 		}
 		if i+1 < len(clusters) {
 			above := clusters[i+1]
-			if above.BuyVol > 0 && clusters[i].SellVol >= above.BuyVol*3 && clusters[i].SellVol >= 1 {
-				bearish[i] = true
-				clusters[i].ImbalanceSell = true
+			if above.SellVol > 0 && clusters[i].BuyVol >= above.SellVol*imbalanceThreshold && clusters[i].BuyVol >= 1 {
+				bullish[i] = true
+				clusters[i].ImbalanceBuy = true
 			}
 		}
 	}

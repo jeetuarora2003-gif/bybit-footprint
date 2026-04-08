@@ -805,12 +805,12 @@ function drawCandle(
       ctx.fillStyle = cluster.delta >= 0 ? BUY_FILL : RED_FILL;
       ctx.fillRect(centerX - f * barMax, rowTop, f * barMax * 2, Math.max(rowH - 0.5, 1));
     } else if (settings.clusterMode === "bidAskProfile") {
-      const sellF = cluster.sellVol / maxV;
-      const buyF = cluster.buyVol / maxV;
+      const askF = cluster.buyVol / maxV;
+      const bidF = cluster.sellVol / maxV;
       ctx.fillStyle = RED_FILL;
-      ctx.fillRect(centerX - sellF * barMax, rowTop, sellF * barMax, Math.max(rowH - 0.5, 1));
+      ctx.fillRect(centerX - askF * barMax, rowTop, askF * barMax, Math.max(rowH - 0.5, 1));
       ctx.fillStyle = BUY_FILL;
-      ctx.fillRect(centerX, rowTop, buyF * barMax, Math.max(rowH - 0.5, 1));
+      ctx.fillRect(centerX, rowTop, bidF * barMax, Math.max(rowH - 0.5, 1));
     } else if (settings.clusterMode === "volumeCluster") {
       const intensity = Math.min(cluster.totalVol / maxV, 1);
       ctx.fillStyle = `rgba(100,149,237,${0.06 + intensity * 0.5})`;
@@ -832,7 +832,7 @@ function drawCandle(
       }
     }
 
-    drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW);
+    drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW, settings.shortNumbers);
 
     if (featureFlags.showImbalanceMarkers) {
       drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH);
@@ -865,20 +865,20 @@ function drawCandle(
   }
 
   if (featureFlags.showTradeCount || featureFlags.showTradeSize || featureFlags.showCandleStats) {
-    drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags);
+    drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags, settings.shortNumbers);
   }
 }
 
-function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW) {
+function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW, shortNumbers) {
   const minFont = 6;
   if (rowH < minFont || candleW < 20 || dataView === "none") return;
 
-  const leftText = fmtFootprintValue(cluster.sellVol);
-  const rightText = fmtFootprintValue(cluster.buyVol);
+  const leftText = fmtFootprintValue(cluster.buyVol, { shortNumbers });
+  const rightText = fmtFootprintValue(cluster.sellVol, { shortNumbers });
   const primaryText = dataView === "volume"
-    ? fmtFootprintValue(cluster.totalVol)
+    ? fmtFootprintValue(cluster.totalVol, { shortNumbers })
     : dataView === "delta"
-      ? fmtFootprintValue(cluster.delta, { signed: true })
+      ? fmtFootprintValue(cluster.delta, { signed: true, shortNumbers })
       : leftText.length >= rightText.length ? leftText : rightText;
   const fontSize = getClusterFontSize(rowH, candleW, primaryText, dataView);
   if (fontSize < minFont) return;
@@ -923,9 +923,9 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW)
       y: yMid,
       rowTop,
       rowH,
-      side: "sell",
-      active: cluster.imbalance_sell,
-      stacked: cluster.stacked_sell,
+      side: "ask",
+      active: cluster.imbalance_buy,
+      stacked: cluster.stacked_buy,
       candleW,
       fontSize,
     });
@@ -938,9 +938,9 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW)
       y: yMid,
       rowTop,
       rowH,
-      side: "buy",
-      active: cluster.imbalance_buy,
-      stacked: cluster.stacked_buy,
+      side: "bid",
+      active: cluster.imbalance_sell,
+      stacked: cluster.stacked_sell,
       candleW,
       fontSize,
     });
@@ -962,7 +962,7 @@ function drawImbalanceTextCell(ctx, {
 }) {
   if (!text) return;
 
-  const color = side === "buy" ? BUY : RED;
+  const color = side === "bid" ? BUY : RED;
   const width = Math.min(candleW / 2 - 4, Math.max(14, text.length * (fontSize * 0.62)));
   const boxX = align === "right" ? x - width - 2 : x - 2;
 
@@ -991,12 +991,12 @@ function drawFootprintMidline(ctx, centerX, rowTop, rowH) {
 
 function drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH) {
   if (cluster.imbalance_buy) {
-    ctx.fillStyle = cluster.stacked_buy ? "rgba(66,165,245,0.95)" : "rgba(66,165,245,0.55)";
-    ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
+    ctx.fillStyle = cluster.stacked_buy ? "rgba(239,83,80,0.95)" : "rgba(239,83,80,0.55)";
+    ctx.fillRect(centerX - candleW / 2 + 1, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
   if (cluster.imbalance_sell) {
-    ctx.fillStyle = cluster.stacked_sell ? "rgba(239,68,68,0.95)" : "rgba(239,68,68,0.55)";
-    ctx.fillRect(centerX - candleW / 2 + 1, rowTop + 1, 3, Math.max(2, rowH - 2));
+    ctx.fillStyle = cluster.stacked_sell ? "rgba(66,165,245,0.95)" : "rgba(66,165,245,0.55)";
+    ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
 }
 
@@ -1020,7 +1020,7 @@ function drawUnfinishedAuction(ctx, candle, clusters, centerX, candleW, rowSize,
   }
 }
 
-function drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags) {
+function drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFlags, shortNumbers) {
   if (candleW < 26) return;
 
   const totalTrades = (candle.buy_trades ?? 0) + (candle.sell_trades ?? 0);
@@ -1033,8 +1033,8 @@ function drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFla
   ctx.fillStyle = "rgba(255,255,255,0.78)";
 
   if (featureFlags.showCandleStats && candleW >= 48) {
-    const volText = fmtFootprintValue(candle.total_volume ?? 0);
-    const deltaText = fmtFootprintValue(candle.candle_delta ?? 0, { signed: true });
+    const volText = fmtFootprintValue(candle.total_volume ?? 0, { shortNumbers });
+    const deltaText = fmtFootprintValue(candle.candle_delta ?? 0, { signed: true, shortNumbers });
     if (volText) {
       ctx.fillStyle = "rgba(255,255,255,0.82)";
       ctx.fillText(volText, centerX, yTop - 14);
@@ -1055,7 +1055,7 @@ function drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, featureFla
   if (featureFlags.showTradeSize && avgTradeSize > 0) {
     ctx.textBaseline = "top";
     ctx.fillStyle = "rgba(148,163,184,0.82)";
-    ctx.fillText(fmtFootprintValue(avgTradeSize), centerX, yBottom + 3);
+    ctx.fillText(fmtFootprintValue(avgTradeSize, { shortNumbers }), centerX, yBottom + 3);
   }
 }
 

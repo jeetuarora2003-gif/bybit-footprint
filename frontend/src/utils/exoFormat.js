@@ -33,9 +33,18 @@ export function formatFootprintValue(value, options = {}) {
   const numeric = Number(value) || 0;
   if (Math.abs(numeric) < 0.000001) return "";
 
-  const { signed = false } = options;
-  let rendered = formatCompactValue(Math.abs(numeric), 2);
-  rendered = rendered.replace(/\.0K$/, "K");
+  const { signed = false, shortNumbers = false } = options;
+  let rendered = "";
+
+  if (shortNumbers) {
+    rendered = formatCompactValue(Math.abs(numeric), 2);
+    rendered = rendered.replace(/\.0K$/, "K");
+  } else {
+    const abs = Math.abs(numeric);
+    const decimals = abs >= 1000 ? 0 : abs >= 100 ? 1 : abs >= 1 ? 3 : abs >= 0.01 ? 4 : 5;
+    rendered = abs.toFixed(decimals);
+  }
+
   rendered = rendered.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
 
   if (signed && numeric > 0) return `+${rendered}`;

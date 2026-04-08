@@ -60,9 +60,9 @@ export default function StatusBar({
           <>
             <span className="stb-sep">|</span>
             <span className="stb-info mono">
-              Cell: <span style={{ color: "var(--red)" }}>{formatFootprintValue(hoveredCluster.sellVol) || "0"}</span>
+              Ask/Bid: <span style={{ color: "var(--red)" }}>{formatFootprintValue(hoveredCluster.buyVol, { shortNumbers: settings?.shortNumbers }) || "0"}</span>
               {" x "}
-              <span style={{ color: "#42a5f5" }}>{formatFootprintValue(hoveredCluster.buyVol) || "0"}</span>
+              <span style={{ color: "#42a5f5" }}>{formatFootprintValue(hoveredCluster.sellVol, { shortNumbers: settings?.shortNumbers }) || "0"}</span>
             </span>
             <span className="stb-sep">|</span>
             <span className="stb-info">

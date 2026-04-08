@@ -231,6 +231,13 @@ export default function Toolbar({
         >
           DOM
         </button>
+        <button
+          className={`tb-tab${settings.shortNumbers ? " tb-tab--active" : ""}`}
+          onClick={() => updateSetting("shortNumbers", !settings.shortNumbers)}
+          title="Short numbers for footprint text"
+        >
+          Short#
+        </button>
       </div>
 
       <div className="tb-right">

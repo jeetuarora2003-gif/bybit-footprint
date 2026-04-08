@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   showDOM: true,
   vaPercent: 70,
   shadingMode: "adaptive",
+  shortNumbers: false,
 };
 
 const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
@@ -32,6 +33,7 @@ const CLASSIC_PRESET = {
   showVA: true,
   showDOM: true,
   shadingMode: "adaptive",
+  shortNumbers: false,
 };
 
 const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];

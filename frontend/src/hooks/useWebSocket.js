@@ -8,6 +8,7 @@ const BASE_HTTP = IS_LOCAL ? "http://localhost:8080" : "";
 
 const SERVER_BAR_MS = 60000;
 const BASE_TICK_SIZE = 0.10;
+const IMBALANCE_THRESHOLD = 2.5;
 
 const TF_MS = {
   "1m": 60000, "2m": 120000, "3m": 180000, "5m": 300000,
@@ -120,11 +121,11 @@ function annotateClusters(clusters) {
     const below = normalized[index - 1];
     const above = normalized[index + 1];
 
-    if (below && below.sellVol > 0 && cluster.buyVol >= below.sellVol * 3 && cluster.buyVol >= 1) {
-      cluster.imbalance_buy = true;
-    }
-    if (above && above.buyVol > 0 && cluster.sellVol >= above.buyVol * 3 && cluster.sellVol >= 1) {
+    if (below && below.buyVol > 0 && cluster.sellVol >= below.buyVol * IMBALANCE_THRESHOLD && cluster.sellVol >= 1) {
       cluster.imbalance_sell = true;
+    }
+    if (above && above.sellVol > 0 && cluster.buyVol >= above.sellVol * IMBALANCE_THRESHOLD && cluster.buyVol >= 1) {
+      cluster.imbalance_buy = true;
     }
   });
 
