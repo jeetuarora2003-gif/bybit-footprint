@@ -1,40 +1,47 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import "./ChartCanvas.css";
 
-const BG             = "#0e1117";
-const GRID_COLOR     = "rgba(255,255,255,0.04)";
-const TEXT_COLOR     = "#8b95a5";
-const TEXT_BRIGHT    = "#c8d0dc";
-const GREEN          = "#26a69a";
-const RED            = "#ef5350";
-const GREEN_FILL     = "rgba(38,166,154,0.25)";
-const RED_FILL       = "rgba(239,83,80,0.25)";
-const POC_COLOR      = "#ef5350";
-const VA_COLOR       = "rgba(38,166,154,0.08)";
-const CROSSHAIR      = "rgba(255,255,255,0.18)";
+const BG = "#0e1117";
+const GRID_COLOR = "rgba(255,255,255,0.04)";
+const TEXT_COLOR = "#8b95a5";
+const TEXT_BRIGHT = "#c8d0dc";
+const GREEN = "#26a69a";
+const RED = "#ef5350";
+const GREEN_FILL = "rgba(38,166,154,0.25)";
+const RED_FILL = "rgba(239,83,80,0.25)";
+const POC_COLOR = "#ef5350";
+const VA_COLOR = "rgba(38,166,154,0.08)";
+const CROSSHAIR = "rgba(255,255,255,0.18)";
 const PRICE_LABEL_BG = "#2563eb";
+const PROFILE_COLOR = "rgba(59,130,246,0.16)";
+const PROFILE_POC = "rgba(244,114,182,0.40)";
+const AUCTION_COLOR = "#facc15";
 
-const ROW_SIZE     = 1.0;
+const BASE_TICK_SIZE = 0.1;
 const PRICE_AXIS_W = 75;
-const TIME_AXIS_H  = 26;
+const TIME_AXIS_H = 26;
 const MIN_CANDLE_W = 6;
 const MAX_CANDLE_W = 200;
+const PROFILE_MAX_W = 80;
+const DOM_MAX_W = 128;
 
 export default function ChartCanvas({ candles, settings, activeFeatures, onCrosshairMove }) {
-  const containerRef   = useRef(null);
-  const canvasRef      = useRef(null);
-  const goLiveBtnRef   = useRef(null);
-  const rafRef         = useRef(null);
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const goLiveBtnRef = useRef(null);
+  const rafRef = useRef(null);
 
-  // Always-fresh refs — no stale closure issues
-  const candlesRef     = useRef(candles);
-  const settingsRef    = useRef(settings);
-  const featuresRef    = useRef(activeFeatures);
+  const candlesRef = useRef(candles);
+  const settingsRef = useRef(settings);
+  const featuresRef = useRef(activeFeatures);
   const crosshairCbRef = useRef(onCrosshairMove);
-  candlesRef.current     = candles;
-  settingsRef.current    = settings;
-  featuresRef.current    = activeFeatures;
-  crosshairCbRef.current = onCrosshairMove;
+
+  useEffect(() => {
+    candlesRef.current = candles;
+    settingsRef.current = settings;
+    featuresRef.current = activeFeatures;
+    crosshairCbRef.current = onCrosshairMove;
+  }, [candles, settings, activeFeatures, onCrosshairMove]);
 
   const stateRef = useRef({
     offsetX: 0,
@@ -55,11 +62,11 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
     velocityX: 0,
     lastDragTime: 0,
     hoveredCandle: null,
+    hoveredPrice: null,
     lastCanvasW: 0,
     lastCanvasH: 0,
   });
 
-  // ── RAF loop (no broken hook calls inside) ──
   useEffect(() => {
     let running = true;
     const loop = () => {
@@ -71,111 +78,116 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
         candlesRef.current,
         settingsRef.current,
         featuresRef.current,
-        crosshairCbRef
       );
-      // Show/hide Go Live button by direct DOM style — no React re-render needed
-      const btn = goLiveBtnRef.current;
-      if (btn) btn.style.display = stateRef.current.autoScroll ? "none" : "flex";
+      const button = goLiveBtnRef.current;
+      if (button) button.style.display = stateRef.current.autoScroll ? "none" : "flex";
       rafRef.current = requestAnimationFrame(loop);
     };
     loop();
-    return () => { running = false; cancelAnimationFrame(rafRef.current); };
-  }, []);
-
-  // ── Native wheel (passive:false so preventDefault works) ──
-  useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
-    const handler = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const s = stateRef.current;
-      const r = el.getBoundingClientRect();
-      const mouseX = e.clientX - r.left;
-      if (mouseX > r.width - PRICE_AXIS_W) return;
-      const zoomFactor    = e.deltaY > 0 ? 0.9 : 1.1;
-      const idxUnderMouse = (s.offsetX + mouseX) / s.candleW;
-      s.candleW   = Math.max(MIN_CANDLE_W, Math.min(MAX_CANDLE_W, s.candleW * zoomFactor));
-      s.offsetX   = idxUnderMouse * s.candleW - mouseX;
-      s.autoScroll = false;
-      s.velocityX  = 0;
+    return () => {
+      running = false;
+      cancelAnimationFrame(rafRef.current);
     };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => el.removeEventListener("wheel", handler);
   }, []);
 
-  // ── Pointer handlers ──
-  const onMove = useCallback((e) => {
-    const r = canvasRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const s = stateRef.current;
-    s.mouse.x = e.clientX - r.left;
-    s.mouse.y = e.clientY - r.top;
-
-    if (s.isDraggingY) {
-      const dy        = s.mouse.y - s.yDragStart;
-      const zoomFac   = Math.exp(dy * 0.003);
-      const range     = s.yDragMax - s.yDragMin;
-      const newRange  = range * zoomFac;
-      const rel       = (s.anchorPrice - s.yDragMin) / range;
-      s.priceMin = s.anchorPrice - rel * newRange;
-      s.priceMax = s.anchorPrice + (1 - rel) * newRange;
-    } else if (s.dragging) {
-      const now        = performance.now();
-      const dt         = now - s.lastDragTime;
-      const newOffsetX = s.dragStartOffset - (e.clientX - s.dragStartX);
-      if (dt > 0) s.velocityX = (newOffsetX - s.offsetX) / dt;
-      s.offsetX      = newOffsetX;
-      s.lastDragTime = now;
-      s.autoScroll   = false;
-    }
-
-    if (crosshairCbRef.current && s.hoveredCandle) {
-      crosshairCbRef.current(s.hoveredCandle);
-    }
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handler = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const state = stateRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = event.clientX - rect.left;
+      if (mouseX > rect.width - PRICE_AXIS_W) return;
+      const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+      const idxUnderMouse = (state.offsetX + mouseX) / state.candleW;
+      state.candleW = clamp(state.candleW * zoomFactor, MIN_CANDLE_W, MAX_CANDLE_W);
+      state.offsetX = idxUnderMouse * state.candleW - mouseX;
+      state.autoScroll = false;
+      state.velocityX = 0;
+    };
+    canvas.addEventListener("wheel", handler, { passive: false });
+    return () => canvas.removeEventListener("wheel", handler);
   }, []);
 
-  const onDown = useCallback((e) => {
-    const el = canvasRef.current;
-    const r  = el?.getBoundingClientRect();
-    if (!r) return;
-    el.setPointerCapture(e.pointerId);
-    const s  = stateRef.current;
-    const x  = e.clientX - r.left;
-    const y  = e.clientY - r.top;
+  const onMove = useCallback((event) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
 
-    if (x >= r.width - PRICE_AXIS_W) {
-      s.isDraggingY = true;
-      s.autoScaleY  = false;
-      s.yDragStart  = y;
-      s.yDragMin    = s.priceMin;
-      s.yDragMax    = s.priceMax;
-      const chartH  = r.height - TIME_AXIS_H;
-      const t       = 1 - y / chartH;
-      s.anchorPrice = s.priceMin + t * (s.priceMax - s.priceMin);
-    } else {
-      s.dragging       = true;
-      s.dragStartX     = e.clientX;
-      s.dragStartOffset = s.offsetX;
-      s.lastDragTime   = performance.now();
-      s.velocityX      = 0;
+    const state = stateRef.current;
+    state.mouse.x = event.clientX - rect.left;
+    state.mouse.y = event.clientY - rect.top;
+
+    if (state.isDraggingY) {
+      const dy = state.mouse.y - state.yDragStart;
+      const zoomFactor = Math.exp(dy * 0.003);
+      const range = state.yDragMax - state.yDragMin;
+      const nextRange = range * zoomFactor;
+      const rel = range === 0 ? 0.5 : (state.anchorPrice - state.yDragMin) / range;
+      state.priceMin = state.anchorPrice - rel * nextRange;
+      state.priceMax = state.anchorPrice + (1 - rel) * nextRange;
+    } else if (state.dragging) {
+      const now = performance.now();
+      const dt = now - state.lastDragTime;
+      const newOffsetX = state.dragStartOffset - (event.clientX - state.dragStartX);
+      if (dt > 0) state.velocityX = (newOffsetX - state.offsetX) / dt;
+      state.offsetX = newOffsetX;
+      state.lastDragTime = now;
+      state.autoScroll = false;
+    }
+
+    if (crosshairCbRef.current && state.hoveredCandle) {
+      crosshairCbRef.current({
+        ...state.hoveredCandle,
+        hoveredPrice: state.hoveredPrice,
+      });
     }
   }, []);
 
-  const onUp = useCallback((e) => {
-    stateRef.current.dragging    = false;
+  const onDown = useCallback((event) => {
+    const canvas = canvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    if (!canvas || !rect) return;
+
+    canvas.setPointerCapture(event.pointerId);
+    const state = stateRef.current;
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    if (x >= rect.width - PRICE_AXIS_W) {
+      state.isDraggingY = true;
+      state.autoScaleY = false;
+      state.yDragStart = y;
+      state.yDragMin = state.priceMin;
+      state.yDragMax = state.priceMax;
+      const chartH = rect.height - TIME_AXIS_H;
+      const t = clamp(1 - y / chartH, 0, 1);
+      state.anchorPrice = state.priceMin + t * (state.priceMax - state.priceMin);
+      return;
+    }
+
+    state.dragging = true;
+    state.dragStartX = event.clientX;
+    state.dragStartOffset = state.offsetX;
+    state.lastDragTime = performance.now();
+    state.velocityX = 0;
+  }, []);
+
+  const onUp = useCallback((event) => {
+    stateRef.current.dragging = false;
     stateRef.current.isDraggingY = false;
-    canvasRef.current?.releasePointerCapture(e.pointerId);
+    canvasRef.current?.releasePointerCapture(event.pointerId);
   }, []);
 
-  const onDoubleClick = useCallback((e) => {
-    const r = canvasRef.current?.getBoundingClientRect();
-    if (!r) return;
-    if (e.clientX - r.left >= r.width - PRICE_AXIS_W) {
+  const onDoubleClick = useCallback((event) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    if (event.clientX - rect.left >= rect.width - PRICE_AXIS_W) {
       stateRef.current.autoScaleY = true;
-    } else {
-      stateRef.current.autoScroll = true;
+      return;
     }
+    stateRef.current.autoScroll = true;
   }, []);
 
   return (
@@ -189,71 +201,73 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
         onPointerCancel={onUp}
         onDoubleClick={onDoubleClick}
       />
-      {/* Go Live button — visibility toggled directly via ref in RAF loop */}
       <button
         ref={goLiveBtnRef}
         style={{
-          display:      "none",
-          position:     "absolute",
-          bottom:       TIME_AXIS_H + 8,
-          right:        PRICE_AXIS_W + 8,
-          background:   "#2563eb",
-          color:        "#fff",
-          border:       "none",
+          display: "none",
+          position: "absolute",
+          bottom: TIME_AXIS_H + 8,
+          right: PRICE_AXIS_W + 8,
+          background: "#2563eb",
+          color: "#fff",
+          border: "none",
           borderRadius: 4,
-          padding:      "4px 10px",
-          fontSize:     11,
-          cursor:       "pointer",
-          alignItems:   "center",
-          gap:          4,
-          fontFamily:   "'JetBrains Mono', monospace",
-          zIndex:       10,
+          padding: "4px 10px",
+          fontSize: 11,
+          cursor: "pointer",
+          alignItems: "center",
+          gap: 4,
+          fontFamily: "'JetBrains Mono', monospace",
+          zIndex: 10,
         }}
         onClick={() => {
           stateRef.current.autoScroll = true;
-          stateRef.current.velocityX  = 0;
+          stateRef.current.velocityX = 0;
         }}
       >
-        ▶ Live
+        Live
       </button>
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   Core render
-   ═══════════════════════════════════════════════════════ */
+function getRowSize(settings) {
+  const multiplier = Number.parseFloat(settings?.tickSize);
+  return BASE_TICK_SIZE * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
+}
 
-function drawFrame(canvas, container, state, candles, settings, activeFeatures, crosshairCbRef) {
-  if (!canvas || !container || !candles || candles.length === 0) return;
+function drawFrame(canvas, container, state, candles, settings, activeFeatures) {
+  if (!canvas || !container || !candles?.length) return;
 
   const dpr = window.devicePixelRatio || 1;
-  const w   = container.clientWidth;
-  const h   = container.clientHeight;
-  if (w === 0 || h === 0) return;
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  if (width === 0 || height === 0) return;
 
-  // Only resize when container dims change
-  if (w !== state.lastCanvasW || h !== state.lastCanvasH) {
-    canvas.width        = w * dpr;
-    canvas.height       = h * dpr;
-    canvas.style.width  = w + "px";
-    canvas.style.height = h + "px";
-    state.lastCanvasW   = w;
-    state.lastCanvasH   = h;
+  if (width !== state.lastCanvasW || height !== state.lastCanvasH) {
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    state.lastCanvasW = width;
+    state.lastCanvasH = height;
   }
 
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const chartW = w - PRICE_AXIS_W;
-  const chartH = h - TIME_AXIS_H;
+  const chartW = width - PRICE_AXIS_W;
+  const chartH = height - TIME_AXIS_H;
+  const rowSize = getRowSize(settings);
+  const showSessionProfile = activeFeatures?.has?.("vol");
+  const showImbalanceMarkers = activeFeatures?.has?.("fpbs") || settings.dataView === "imbalance";
+  const showAuctionMarkers = activeFeatures?.has?.("hl");
 
-  const totalW     = candles.length * state.candleW;
+  const totalW = candles.length * state.candleW;
   const liveEdgeMax = Math.max(0, totalW - chartW);
 
-  // Kinetic inertia
   if (!state.dragging && Math.abs(state.velocityX) > 0.05) {
-    state.offsetX   += state.velocityX * 16;
+    state.offsetX += state.velocityX * 16;
     state.velocityX *= 0.90;
     if (Math.abs(state.velocityX) < 0.05) state.velocityX = 0;
   }
@@ -262,43 +276,38 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures, 
     state.offsetX = Math.max(0, totalW - chartW + 120);
   } else if (!state.dragging && state.offsetX >= liveEdgeMax + 100) {
     state.autoScroll = true;
-    state.velocityX  = 0;
+    state.velocityX = 0;
   }
 
   if (!state.dragging) {
-    if (state.offsetX > totalW + chartW * 2) { state.offsetX = totalW + chartW * 2; state.velocityX = 0; }
-    if (state.offsetX < -chartW * 0.8)       { state.offsetX = -chartW * 0.8;       state.velocityX = 0; }
+    if (state.offsetX > totalW + chartW * 2) {
+      state.offsetX = totalW + chartW * 2;
+      state.velocityX = 0;
+    }
+    if (state.offsetX < -chartW * 0.8) {
+      state.offsetX = -chartW * 0.8;
+      state.velocityX = 0;
+    }
   }
 
-  // VWAP — resets at UTC midnight
-  let cumPV = 0, cumVol = 0, lastVwapDay = -1;
-  for (let i = 0; i < candles.length; i++) {
-    const c   = candles[i];
-    const day = new Date(c.candle_open_time).getUTCDate();
-    if (day !== lastVwapDay) { cumPV = 0; cumVol = 0; lastVwapDay = day; }
-    const tp = (c.high + c.low + c.close) / 3;
-    const vol = c.total_volume || 0;
-    cumPV  += tp * vol;
-    cumVol += vol;
-    c.vwap  = cumVol > 0 ? cumPV / cumVol : null;
-  }
+  applyVWAP(candles);
 
-  const startIdx  = Math.floor(state.offsetX / state.candleW);
-  const endIdx    = Math.ceil((state.offsetX + chartW) / state.candleW);
+  const startIdx = Math.floor(state.offsetX / state.candleW);
+  const endIdx = Math.ceil((state.offsetX + chartW) / state.candleW);
   const safeStart = Math.max(0, startIdx);
-  const safeEnd   = Math.max(0, Math.min(candles.length, endIdx));
-  const visible   = safeStart < safeEnd ? candles.slice(safeStart, safeEnd) : [];
-  const rightPad  = totalW < chartW ? chartW - totalW : 0;
+  const safeEnd = Math.max(0, Math.min(candles.length, endIdx));
+  const visible = safeStart < safeEnd ? candles.slice(safeStart, safeEnd) : [];
+  const rightPad = totalW < chartW ? chartW - totalW : 0;
 
-  // Visible price range
-  let pMin = Infinity, pMax = -Infinity;
+  let pMin = Infinity;
+  let pMax = -Infinity;
   if (visible.length > 0) {
-    for (const c of visible) {
-      if (c.low  < pMin) pMin = c.low;
-      if (c.high > pMax) pMax = c.high;
-      if (c.clusters) for (const cl of c.clusters) {
-        if (cl.price            < pMin) pMin = cl.price;
-        if (cl.price + ROW_SIZE > pMax) pMax = cl.price + ROW_SIZE;
+    for (const candle of visible) {
+      if (candle.low < pMin) pMin = candle.low;
+      if (candle.high > pMax) pMax = candle.high;
+      for (const cluster of candle.clusters || []) {
+        if (cluster.price < pMin) pMin = cluster.price;
+        if (cluster.price + rowSize > pMax) pMax = cluster.price + rowSize;
       }
     }
   } else {
@@ -316,399 +325,619 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures, 
     pMin = state.priceMin;
     pMax = state.priceMax;
   }
-  const priceRange = pMax - pMin;
 
-  const p2y = (p) => chartH - ((p - pMin) / priceRange) * chartH;
-  const i2x = (i) => rightPad + (i - startIdx) * state.candleW - (state.offsetX % state.candleW) + state.candleW / 2;
+  const priceRange = (pMax - pMin) || 1;
+  const p2y = (price) => chartH - ((price - pMin) / priceRange) * chartH;
+  const i2x = (index) => rightPad + (index - startIdx) * state.candleW - (state.offsetX % state.candleW) + state.candleW / 2;
 
-  // Update hovered candle for crosshair callback
-  const mx = state.mouse.x;
-  if (mx > 0 && mx < chartW && visible.length > 0) {
-    const hIdx    = Math.floor((state.offsetX + mx - rightPad) / state.candleW);
-    const clamped = Math.max(0, Math.min(candles.length - 1, hIdx));
+  const mouseX = state.mouse.x;
+  if (mouseX > 0 && mouseX < chartW && visible.length > 0) {
+    const hoverIdx = Math.floor((state.offsetX + mouseX - rightPad) / state.candleW);
+    const clamped = Math.max(0, Math.min(candles.length - 1, hoverIdx));
     state.hoveredCandle = candles[clamped] || null;
+    if (state.mouse.y > 0 && state.mouse.y < chartH) {
+      state.hoveredPrice = pMin + (1 - state.mouse.y / chartH) * priceRange;
+    }
   } else {
     state.hoveredCandle = null;
+    state.hoveredPrice = null;
   }
 
-  // ── Background ──
   ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, width, height);
 
-  // ── Grid ──
-  ctx.strokeStyle = GRID_COLOR;
-  ctx.lineWidth   = 1;
-  const pStep = niceStep(priceRange);
-  for (let p = Math.ceil(pMin / pStep) * pStep; p <= pMax; p += pStep) {
-    const y = Math.round(p2y(p)) + 0.5;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke();
-  }
+  drawGrid(ctx, chartW, pMin, pMax, niceStep(priceRange), p2y);
 
-  // Adaptive shading globals
-  let gMaxV = 0.001, gMaxD = 0.001;
-  for (const c of visible) {
-    if (c.clusters) for (const cl of c.clusters) {
-      if (cl.totalVol        > gMaxV) gMaxV = cl.totalVol;
-      if (Math.abs(cl.delta) > gMaxD) gMaxD = Math.abs(cl.delta);
+  let maxClusterVol = 0.001;
+  let maxClusterDelta = 0.001;
+  for (const candle of visible) {
+    for (const cluster of candle.clusters || []) {
+      if (cluster.totalVol > maxClusterVol) maxClusterVol = cluster.totalVol;
+      if (Math.abs(cluster.delta) > maxClusterDelta) maxClusterDelta = Math.abs(cluster.delta);
     }
   }
 
-  // ── Candles + clusters ──
-  for (let vi = 0; vi < visible.length; vi++) {
+  if (showSessionProfile) {
+    drawSessionProfile(ctx, visible, chartH, p2y, rowSize);
+  }
+
+  for (let vi = 0; vi < visible.length; vi += 1) {
     drawCandle(
-      ctx, visible[vi], i2x(startIdx + vi),
+      ctx,
+      visible[vi],
+      i2x(startIdx + vi),
       Math.max(state.candleW * 0.6, 2),
-      p2y, chartH, state.candleW, settings, gMaxV, gMaxD
+      p2y,
+      chartH,
+      state.candleW,
+      settings,
+      maxClusterVol,
+      maxClusterDelta,
+      rowSize,
+      showImbalanceMarkers,
+      showAuctionMarkers,
     );
   }
 
-  // ── VWAP ──
-  if (activeFeatures && activeFeatures.has("vwap")) {
+  if (activeFeatures?.has?.("vwap")) {
     drawVWAP(ctx, visible, startIdx, p2y, i2x);
   }
 
-  // ── Price axis ──
-  drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, pStep, p2y, visible);
+  drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, niceStep(priceRange), p2y, visible);
 
-  // ── DOM ──
-  const lastC = visible[visible.length - 1];
-  if (settings.showDOM && lastC?.bids?.length) {
-    drawDOM(ctx, lastC.bids, lastC.asks, chartW, chartH, p2y);
+  const lastVisible = visible.at(-1);
+  if (settings.showDOM && lastVisible?.bids?.length) {
+    drawDOM(ctx, lastVisible.bids, lastVisible.asks, chartW, chartH, p2y, rowSize);
   }
 
-  // ── Time axis ──
   drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x);
-
-  // ── Crosshair ──
   drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, PRICE_AXIS_W);
 }
 
-/* ─────────────────────────────────────────────────────
-   Price axis
-───────────────────────────────────────────────────── */
+function applyVWAP(candles) {
+  let cumPV = 0;
+  let cumVol = 0;
+  let lastVwapDay = -1;
+
+  for (const candle of candles) {
+    const day = new Date(candle.candle_open_time).getUTCDate();
+    if (day !== lastVwapDay) {
+      cumPV = 0;
+      cumVol = 0;
+      lastVwapDay = day;
+    }
+    const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+    const volume = candle.total_volume || 0;
+    cumPV += typicalPrice * volume;
+    cumVol += volume;
+    candle.vwap = cumVol > 0 ? cumPV / cumVol : null;
+  }
+}
+
+function drawGrid(ctx, chartW, pMin, pMax, pStep, p2y) {
+  ctx.strokeStyle = GRID_COLOR;
+  ctx.lineWidth = 1;
+  for (let price = Math.ceil(pMin / pStep) * pStep; price <= pMax; price += pStep) {
+    const y = Math.round(p2y(price)) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(chartW, y);
+    ctx.stroke();
+  }
+}
+
 function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible) {
   ctx.fillStyle = "#0c0f15";
   ctx.fillRect(chartW, 0, axisW, chartH);
   ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth   = 1;
-  ctx.beginPath(); ctx.moveTo(chartW, 0); ctx.lineTo(chartW, chartH); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(chartW, 0);
+  ctx.lineTo(chartW, chartH);
+  ctx.stroke();
 
-  ctx.fillStyle    = TEXT_COLOR;
-  ctx.font         = "10px 'JetBrains Mono',monospace";
-  ctx.textAlign    = "center";
+  ctx.fillStyle = TEXT_COLOR;
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  for (let p = Math.ceil(pMin / pStep) * pStep; p <= pMax; p += pStep) {
-    const y = p2y(p);
-    if (y > 8 && y < chartH - 8) ctx.fillText(p.toFixed(1), chartW + axisW / 2, y);
+
+  for (let price = Math.ceil(pMin / pStep) * pStep; price <= pMax; price += pStep) {
+    const y = p2y(price);
+    if (y > 8 && y < chartH - 8) ctx.fillText(price.toFixed(1), chartW + axisW / 2, y);
   }
 
-  if (visible.length) {
-    const last = visible[visible.length - 1];
-    const y    = p2y(last.close);
-    const col  = last.close >= last.open ? GREEN : RED;
-    ctx.strokeStyle = col; ctx.lineWidth = 0.6; ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = col;
-    ctx.fillRect(chartW, y - 9, axisW, 18);
-    ctx.fillStyle    = "#fff";
-    ctx.font         = "bold 10px 'JetBrains Mono',monospace";
-    ctx.textAlign    = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(last.close.toFixed(1), chartW + axisW / 2, y);
-  }
+  if (visible.length === 0) return;
+
+  const last = visible.at(-1);
+  const y = p2y(last.close);
+  const color = last.close >= last.open ? GREEN : RED;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 0.6;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(chartW, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  ctx.fillRect(chartW, y - 9, axisW, 18);
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 10px 'JetBrains Mono', monospace";
+  ctx.fillText(last.close.toFixed(1), chartW + axisW / 2, y);
 }
 
-/* ─────────────────────────────────────────────────────
-   Time axis
-───────────────────────────────────────────────────── */
 function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x) {
   ctx.fillStyle = "#0c0f15";
   ctx.fillRect(0, chartH, chartW + PRICE_AXIS_W, TIME_AXIS_H);
   ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth   = 1;
-  ctx.beginPath(); ctx.moveTo(0, chartH); ctx.lineTo(chartW + PRICE_AXIS_W, chartH); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, chartH);
+  ctx.lineTo(chartW + PRICE_AXIS_W, chartH);
+  ctx.stroke();
 
-  ctx.fillStyle    = TEXT_COLOR;
-  ctx.font         = "9px 'JetBrains Mono',monospace";
-  ctx.textAlign    = "center";
+  ctx.fillStyle = TEXT_COLOR;
+  ctx.font = "9px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+
   const step = Math.max(1, Math.floor(90 / state.candleW));
   for (let vi = 0; vi < visible.length; vi += step) {
     const x = i2x(startIdx + vi);
-    if (x > 30 && x < chartW - 30) {
-      const d = new Date(visible[vi].candle_open_time);
-      ctx.fillText(
-        d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        x, chartH + TIME_AXIS_H / 2
-      );
-    }
+    if (x <= 30 || x >= chartW - 30) continue;
+    const date = new Date(visible[vi].candle_open_time);
+    ctx.fillText(
+      date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      x,
+      chartH + TIME_AXIS_H / 2,
+    );
   }
 }
 
-/* ─────────────────────────────────────────────────────
-   Crosshair
-───────────────────────────────────────────────────── */
 function drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, axisW) {
   const { mouse } = state;
   if (mouse.x <= 0 || mouse.x >= chartW || mouse.y <= 0 || mouse.y >= chartH) return;
 
-  ctx.strokeStyle = CROSSHAIR; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
-  ctx.beginPath(); ctx.moveTo(mouse.x, 0);     ctx.lineTo(mouse.x, chartH); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0, mouse.y);     ctx.lineTo(chartW, mouse.y); ctx.stroke();
+  ctx.strokeStyle = CROSSHAIR;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(mouse.x, 0);
+  ctx.lineTo(mouse.x, chartH);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, mouse.y);
+  ctx.lineTo(chartW, mouse.y);
+  ctx.stroke();
   ctx.setLineDash([]);
 
-  const hp = pMin + (1 - mouse.y / chartH) * priceRange;
-  ctx.fillStyle    = PRICE_LABEL_BG;
+  const hoveredPrice = pMin + (1 - mouse.y / chartH) * priceRange;
+  ctx.fillStyle = PRICE_LABEL_BG;
   ctx.fillRect(chartW, mouse.y - 9, axisW, 18);
-  ctx.fillStyle    = "#fff";
-  ctx.font         = "10px 'JetBrains Mono',monospace";
-  ctx.textAlign    = "center";
+  ctx.fillStyle = "#fff";
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(hp.toFixed(1), chartW + axisW / 2, mouse.y);
+  ctx.fillText(hoveredPrice.toFixed(1), chartW + axisW / 2, mouse.y);
 }
 
-/* ─────────────────────────────────────────────────────
-   Single candle + clusters
-───────────────────────────────────────────────────── */
-function drawCandle(ctx, candle, cx, bodyW, p2y, chartH, candleW, settings, gMaxV, gMaxD) {
+function drawCandle(
+  ctx,
+  candle,
+  centerX,
+  bodyW,
+  p2y,
+  chartH,
+  candleW,
+  settings,
+  gMaxV,
+  gMaxD,
+  rowSize,
+  showImbalanceMarkers,
+  showAuctionMarkers,
+) {
   const { open, high, low, close, clusters } = candle;
-  const up  = close >= open;
-  const col = up ? GREEN : RED;
-  const st  = settings.candleStyle;
+  const up = close >= open;
+  const color = up ? GREEN : RED;
+  const style = settings.candleStyle;
 
-  const yO   = p2y(open), yC = p2y(close), yH = p2y(high), yL = p2y(low);
-  const yTop = Math.min(yO, yC);
-  const yBot = Math.max(yO, yC);
-  const bH   = Math.max(yBot - yTop, 1);
+  const yOpen = p2y(open);
+  const yClose = p2y(close);
+  const yHigh = p2y(high);
+  const yLow = p2y(low);
+  const yTop = Math.min(yOpen, yClose);
+  const yBottom = Math.max(yOpen, yClose);
+  const bodyH = Math.max(yBottom - yTop, 1);
 
-  if (st !== "none") {
-    ctx.strokeStyle = col; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(cx, yH); ctx.lineTo(cx, yL); ctx.stroke();
+  if (style !== "none") {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerX, yHigh);
+    ctx.lineTo(centerX, yLow);
+    ctx.stroke();
 
-    if (st === "ohlc") {
+    if (style === "ohlc") {
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cx - bodyW / 3, yO); ctx.lineTo(cx, yO);
-      ctx.moveTo(cx, yC);             ctx.lineTo(cx + bodyW / 3, yC);
+      ctx.moveTo(centerX - bodyW / 3, yOpen);
+      ctx.lineTo(centerX, yOpen);
+      ctx.moveTo(centerX, yClose);
+      ctx.lineTo(centerX + bodyW / 3, yClose);
       ctx.stroke();
-    } else if (st === "embed") {
-      ctx.fillStyle = col; ctx.globalAlpha = 0.15;
-      ctx.fillRect(cx - candleW / 2, yTop, candleW, bH);
+    } else if (style === "embed") {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.15;
+      ctx.fillRect(centerX - candleW / 2, yTop, candleW, bodyH);
       ctx.globalAlpha = 1;
-    } else if (st === "borderedCandle") {
+    } else if (style === "borderedCandle") {
       ctx.fillStyle = BG;
-      ctx.fillRect(cx - bodyW / 2, yTop, bodyW, bH);
-      ctx.strokeStyle = col; ctx.lineWidth = 1;
-      ctx.strokeRect(cx - bodyW / 2, yTop, bodyW, bH);
-    } else if (st === "monoCandle" || st === "monoBox" || st === "flatCandle") {
+      ctx.fillRect(centerX - bodyW / 2, yTop, bodyW, bodyH);
+      ctx.strokeRect(centerX - bodyW / 2, yTop, bodyW, bodyH);
+    } else if (style === "monoCandle" || style === "monoBox" || style === "flatCandle") {
       ctx.fillStyle = up ? "rgba(180,180,180,0.25)" : "rgba(180,180,180,0.12)";
-      ctx.fillRect(cx - bodyW / 2, yTop, bodyW, bH);
-    } else if (st === "colorBox") {
+      ctx.fillRect(centerX - bodyW / 2, yTop, bodyW, bodyH);
+    } else if (style === "colorBox") {
       ctx.fillStyle = up ? GREEN_FILL : RED_FILL;
-      ctx.fillRect(cx - candleW / 2 + 1, yTop, candleW - 2, bH);
-    } else if (st === "hl") {
-      /* wick only — drawn above */
-    } else if (st === "oc") {
+      ctx.fillRect(centerX - candleW / 2 + 1, yTop, candleW - 2, bodyH);
+    } else if (style === "oc") {
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(cx, yO); ctx.lineTo(cx, yC); ctx.stroke();
-    } else {
-      // colorCandle (default)
+      ctx.beginPath();
+      ctx.moveTo(centerX, yOpen);
+      ctx.lineTo(centerX, yClose);
+      ctx.stroke();
+    } else if (style !== "hl") {
       ctx.fillStyle = up ? GREEN_FILL : RED_FILL;
-      ctx.fillRect(cx - bodyW / 2, yTop, bodyW, bH);
-      ctx.strokeStyle = col; ctx.lineWidth = 1;
-      ctx.strokeRect(cx - bodyW / 2, yTop, bodyW, bH);
+      ctx.fillRect(centerX - bodyW / 2, yTop, bodyW, bodyH);
+      ctx.strokeRect(centerX - bodyW / 2, yTop, bodyW, bodyH);
     }
   }
 
-  if (!clusters || !clusters.length || settings.clusterMode === "void") return;
+  if (!clusters?.length || settings.clusterMode === "void") return;
 
   const maxV = settings.shadingMode === "adaptive"
     ? gMaxV
-    : Math.max(0.001, ...clusters.map(c => c.totalVol));
+    : Math.max(0.001, ...clusters.map((cluster) => cluster.totalVol));
   const maxD = settings.shadingMode === "adaptive"
     ? gMaxD
-    : Math.max(0.001, ...clusters.map(c => Math.abs(c.delta)));
+    : Math.max(0.001, ...clusters.map((cluster) => Math.abs(cluster.delta)));
 
-  // POC
-  let pocPrice = clusters[0]?.price ?? 0, pocVol = 0;
-  for (const cl of clusters) if (cl.totalVol > pocVol) { pocVol = cl.totalVol; pocPrice = cl.price; }
+  let pocPrice = clusters[0]?.price ?? 0;
+  let pocVol = 0;
+  for (const cluster of clusters) {
+    if (cluster.totalVol > pocVol) {
+      pocVol = cluster.totalVol;
+      pocPrice = cluster.price;
+    }
+  }
 
-  // Value Area
-  const totalV   = clusters.reduce((s, c) => s + c.totalVol, 0);
-  const vaTarget = totalV * ((settings.vaPercent || 70) / 100);
-  const sorted   = [...clusters].sort((a, b) => b.totalVol - a.totalVol);
+  const totalVol = clusters.reduce((sum, cluster) => sum + cluster.totalVol, 0);
+  const vaTarget = totalVol * ((settings.vaPercent || 70) / 100);
+  const sortedByVol = [...clusters].sort((a, b) => b.totalVol - a.totalVol);
   let vaAcc = 0;
   const vaSet = new Set();
-  for (const c of sorted) { vaAcc += c.totalVol; vaSet.add(c.price); if (vaAcc >= vaTarget) break; }
+  for (const cluster of sortedByVol) {
+    vaAcc += cluster.totalVol;
+    vaSet.add(cluster.price);
+    if (vaAcc >= vaTarget) break;
+  }
 
+  const imbalance = getImbalanceRows(clusters);
   const barMax = candleW * 0.45;
-  const mode   = settings.clusterMode;
 
-  for (const cl of clusters) {
-    const yRT  = p2y(cl.price + ROW_SIZE);
-    const yRB  = p2y(cl.price);
-    const rH   = Math.abs(yRB - yRT);
-    const rTop = Math.min(yRT, yRB);
-    if (rTop > chartH || rTop + rH < 0) continue;
+  for (const cluster of clusters) {
+    const yRowTop = p2y(cluster.price + rowSize);
+    const yRowBottom = p2y(cluster.price);
+    const rowH = Math.abs(yRowBottom - yRowTop);
+    const rowTop = Math.min(yRowTop, yRowBottom);
+    if (rowTop > chartH || rowTop + rowH < 0) continue;
 
-    // Value Area background
-    if (settings.showVA && vaSet.has(cl.price)) {
+    if (settings.showVA && vaSet.has(cluster.price)) {
       ctx.fillStyle = VA_COLOR;
-      ctx.fillRect(cx - candleW / 2, rTop, candleW, rH);
+      ctx.fillRect(centerX - candleW / 2, rowTop, candleW, rowH);
     }
 
-    // Cluster shading
-    if (mode === "volumeProfile") {
-      const f = cl.totalVol / maxV;
-      ctx.fillStyle = vaSet.has(cl.price) ? "rgba(38,166,154,0.4)" : "rgba(100,110,130,0.3)";
-      ctx.fillRect(cx - f * barMax, rTop, f * barMax * 2, Math.max(rH - 0.5, 1));
-    } else if (mode === "deltaProfile") {
-      const f = Math.abs(cl.delta) / maxD;
-      ctx.fillStyle = cl.delta >= 0 ? GREEN_FILL : RED_FILL;
-      ctx.fillRect(cx - f * barMax, rTop, f * barMax * 2, Math.max(rH - 0.5, 1));
-    } else if (mode === "bidAskProfile") {
-      const sF = cl.sellVol / maxV, bF = cl.buyVol / maxV;
+    if (settings.clusterMode === "volumeProfile") {
+      const f = cluster.totalVol / maxV;
+      ctx.fillStyle = vaSet.has(cluster.price) ? "rgba(38,166,154,0.4)" : "rgba(100,110,130,0.3)";
+      ctx.fillRect(centerX - f * barMax, rowTop, f * barMax * 2, Math.max(rowH - 0.5, 1));
+    } else if (settings.clusterMode === "deltaProfile") {
+      const f = Math.abs(cluster.delta) / maxD;
+      ctx.fillStyle = cluster.delta >= 0 ? GREEN_FILL : RED_FILL;
+      ctx.fillRect(centerX - f * barMax, rowTop, f * barMax * 2, Math.max(rowH - 0.5, 1));
+    } else if (settings.clusterMode === "bidAskProfile") {
+      const sellF = cluster.sellVol / maxV;
+      const buyF = cluster.buyVol / maxV;
       ctx.fillStyle = RED_FILL;
-      ctx.fillRect(cx - sF * barMax, rTop, sF * barMax, Math.max(rH - 0.5, 1));
+      ctx.fillRect(centerX - sellF * barMax, rowTop, sellF * barMax, Math.max(rowH - 0.5, 1));
       ctx.fillStyle = GREEN_FILL;
-      ctx.fillRect(cx, rTop, bF * barMax, Math.max(rH - 0.5, 1));
-    } else if (mode === "volumeCluster") {
-      const intensity = Math.min(cl.totalVol / maxV, 1);
+      ctx.fillRect(centerX, rowTop, buyF * barMax, Math.max(rowH - 0.5, 1));
+    } else if (settings.clusterMode === "volumeCluster") {
+      const intensity = Math.min(cluster.totalVol / maxV, 1);
       ctx.fillStyle = `rgba(100,149,237,${0.06 + intensity * 0.5})`;
-      ctx.fillRect(cx - candleW / 2 + 1, rTop, candleW - 2, Math.max(rH - 0.5, 1));
-    } else if (mode === "deltaCluster") {
-      const intensity = Math.min(Math.abs(cl.delta) / maxD, 1);
-      ctx.fillStyle = cl.delta >= 0
+      ctx.fillRect(centerX - candleW / 2 + 1, rowTop, candleW - 2, Math.max(rowH - 0.5, 1));
+    } else if (settings.clusterMode === "deltaCluster") {
+      const intensity = Math.min(Math.abs(cluster.delta) / maxD, 1);
+      ctx.fillStyle = cluster.delta >= 0
         ? `rgba(38,166,154,${0.06 + intensity * 0.5})`
         : `rgba(239,83,80,${0.06 + intensity * 0.5})`;
-      ctx.fillRect(cx - candleW / 2 + 1, rTop, candleW - 2, Math.max(rH - 0.5, 1));
-    } else if (mode === "deltaLadder") {
+      ctx.fillRect(centerX - candleW / 2 + 1, rowTop, candleW - 2, Math.max(rowH - 0.5, 1));
+    } else if (settings.clusterMode === "deltaLadder") {
       const half = (candleW - 4) / 2;
-      ctx.fillStyle = `rgba(239,83,80,${0.06 + Math.min(cl.sellVol / maxV, 1) * 0.45})`;
-      ctx.fillRect(cx - half - 1, rTop, half, Math.max(rH - 0.5, 1));
-      ctx.fillStyle = `rgba(38,166,154,${0.06 + Math.min(cl.buyVol / maxV, 1) * 0.45})`;
-      ctx.fillRect(cx + 1, rTop, half, Math.max(rH - 0.5, 1));
+      ctx.fillStyle = `rgba(239,83,80,${0.06 + Math.min(cluster.sellVol / maxV, 1) * 0.45})`;
+      ctx.fillRect(centerX - half - 1, rowTop, half, Math.max(rowH - 0.5, 1));
+      ctx.fillStyle = `rgba(38,166,154,${0.06 + Math.min(cluster.buyVol / maxV, 1) * 0.45})`;
+      ctx.fillRect(centerX + 1, rowTop, half, Math.max(rowH - 0.5, 1));
     }
 
-    // Data text
-    const minFont  = 6, maxFont = 11;
-    const fontSize = Math.min(maxFont, Math.max(minFont, rH - 1));
-    if (rH >= minFont && candleW >= 20 && settings.dataView !== "none") {
-      ctx.font         = `${fontSize}px 'JetBrains Mono',monospace`;
-      ctx.textBaseline = "middle";
-      const yM = rTop + rH / 2;
-      const dv = settings.dataView;
+    drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW);
 
-      if (dv === "volume") {
-        ctx.fillStyle = TEXT_BRIGHT; ctx.textAlign = "center";
-        ctx.fillText(fmtV(cl.totalVol), cx, yM);
-      } else if (dv === "delta") {
-        ctx.fillStyle = cl.delta >= 0 ? GREEN : RED; ctx.textAlign = "center";
-        ctx.fillText(fmtV(cl.delta), cx, yM);
-      } else if (dv === "bidAsk") {
-        ctx.fillStyle = RED;    ctx.textAlign = "right"; ctx.fillText(fmtV(cl.sellVol), cx - 2, yM);
-        ctx.fillStyle = "#555"; ctx.textAlign = "center"; ctx.fillText("×", cx, yM);
-        ctx.fillStyle = GREEN;  ctx.textAlign = "left";  ctx.fillText(fmtV(cl.buyVol),  cx + 2, yM);
-      } else if (dv === "imbalance") {
-        const ratio = cl.buyVol > 0 && cl.sellVol > 0
-          ? Math.max(cl.buyVol / cl.sellVol, cl.sellVol / cl.buyVol) : 0;
-        if (ratio >= 3) {
-          ctx.fillStyle   = cl.buyVol > cl.sellVol ? GREEN : RED;
-          ctx.globalAlpha = 0.18;
-          ctx.fillRect(cx - candleW / 2 + 1, rTop, candleW - 2, rH);
-          ctx.globalAlpha = 1;
-        }
-        ctx.fillStyle = RED;   ctx.textAlign = "right"; ctx.fillText(fmtV(cl.sellVol), cx - 2, yM);
-        ctx.fillStyle = GREEN; ctx.textAlign = "left";  ctx.fillText(fmtV(cl.buyVol),  cx + 2, yM);
-      }
+    if (showImbalanceMarkers) {
+      drawImbalanceMarker(ctx, imbalance, cluster.price, centerX, candleW, rowTop, rowH);
     }
 
-    // Row separator line
-    if (rH >= 3) {
+    if (rowH >= 3) {
       ctx.strokeStyle = "rgba(255,255,255,0.03)";
-      ctx.lineWidth   = 0.5;
+      ctx.lineWidth = 0.5;
       ctx.beginPath();
-      ctx.moveTo(cx - candleW / 2, rTop + rH);
-      ctx.lineTo(cx + candleW / 2, rTop + rH);
+      ctx.moveTo(centerX - candleW / 2, rowTop + rowH);
+      ctx.lineTo(centerX + candleW / 2, rowTop + rowH);
       ctx.stroke();
     }
   }
 
-  // POC line
   if (settings.showPOC) {
-    const y = p2y(pocPrice + ROW_SIZE / 2);
-    ctx.strokeStyle = POC_COLOR; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(cx - candleW / 2, y); ctx.lineTo(cx + candleW / 2, y); ctx.stroke();
+    const y = p2y(pocPrice + rowSize / 2);
+    ctx.strokeStyle = POC_COLOR;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(centerX - candleW / 2, y);
+    ctx.lineTo(centerX + candleW / 2, y);
+    ctx.stroke();
+  }
+
+  if (showAuctionMarkers) {
+    drawUnfinishedAuction(ctx, clusters, centerX, candleW, rowSize, p2y);
   }
 }
 
-/* ─────────────────────────────────────────────────────
-   DOM Ladder
-───────────────────────────────────────────────────── */
-function drawDOM(ctx, bids, asks, chartW, chartH, p2y) {
-  let maxS = 0;
-  for (const b of bids) if (b.size > maxS) maxS = b.size;
-  for (const a of asks) if (a.size > maxS) maxS = a.size;
-  if (maxS === 0) return;
+function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW) {
+  const minFont = 6;
+  const maxFont = 11;
+  const fontSize = Math.min(maxFont, Math.max(minFont, rowH - 1));
+  if (rowH < minFont || candleW < 20 || dataView === "none") return;
 
-  const maxBarW = 120;
-  const rh      = Math.abs(p2y(0) - p2y(ROW_SIZE));
-  const bh      = Math.max(rh - 0.5, 2);
+  ctx.font = `${fontSize}px 'JetBrains Mono', monospace`;
+  ctx.textBaseline = "middle";
+  const yMid = rowTop + rowH / 2;
 
-  ctx.fillStyle = "rgba(239,83,80,0.18)";
-  for (const a of asks) {
-    const y = p2y(a.price);
-    if (y < 0 || y > chartH) continue;
-    ctx.fillRect(chartW - (a.size / maxS) * maxBarW, y - Math.max(1, rh / 2), (a.size / maxS) * maxBarW, bh);
+  if (dataView === "volume") {
+    ctx.fillStyle = TEXT_BRIGHT;
+    ctx.textAlign = "center";
+    ctx.fillText(fmtV(cluster.totalVol), centerX, yMid);
+    return;
   }
-  ctx.fillStyle = "rgba(38,166,154,0.18)";
-  for (const b of bids) {
-    const y = p2y(b.price);
-    if (y < 0 || y > chartH) continue;
-    ctx.fillRect(chartW - (b.size / maxS) * maxBarW, y - Math.max(1, rh / 2), (b.size / maxS) * maxBarW, bh);
+
+  if (dataView === "delta") {
+    ctx.fillStyle = cluster.delta >= 0 ? GREEN : RED;
+    ctx.textAlign = "center";
+    ctx.fillText(fmtV(cluster.delta), centerX, yMid);
+    return;
+  }
+
+  if (dataView === "bidAsk") {
+    ctx.fillStyle = RED;
+    ctx.textAlign = "right";
+    ctx.fillText(fmtV(cluster.sellVol), centerX - 2, yMid);
+    ctx.fillStyle = "#555";
+    ctx.textAlign = "center";
+    ctx.fillText("x", centerX, yMid);
+    ctx.fillStyle = GREEN;
+    ctx.textAlign = "left";
+    ctx.fillText(fmtV(cluster.buyVol), centerX + 2, yMid);
+    return;
+  }
+
+  if (dataView === "imbalance") {
+    const ratio = cluster.buyVol > 0 && cluster.sellVol > 0
+      ? Math.max(cluster.buyVol / cluster.sellVol, cluster.sellVol / cluster.buyVol)
+      : 0;
+    if (ratio >= 3) {
+      ctx.fillStyle = cluster.buyVol > cluster.sellVol ? GREEN : RED;
+      ctx.globalAlpha = 0.18;
+      ctx.fillRect(centerX - candleW / 2 + 1, rowTop, candleW - 2, rowH);
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = RED;
+    ctx.textAlign = "right";
+    ctx.fillText(fmtV(cluster.sellVol), centerX - 2, yMid);
+    ctx.fillStyle = GREEN;
+    ctx.textAlign = "left";
+    ctx.fillText(fmtV(cluster.buyVol), centerX + 2, yMid);
   }
 }
 
-/* ─────────────────────────────────────────────────────
-   VWAP Line
-───────────────────────────────────────────────────── */
+function getImbalanceRows(clusters) {
+  const bullishRows = new Set();
+  const bearishRows = new Set();
+
+  for (let index = 0; index < clusters.length; index += 1) {
+    const current = clusters[index];
+    const below = clusters[index - 1];
+    const above = clusters[index + 1];
+
+    if (below && below.sellVol > 0 && current.buyVol >= below.sellVol * 3 && current.buyVol >= 1) {
+      bullishRows.add(current.price);
+    }
+    if (above && above.buyVol > 0 && current.sellVol >= above.buyVol * 3 && current.sellVol >= 1) {
+      bearishRows.add(current.price);
+    }
+  }
+
+  return {
+    bullishRows,
+    bearishRows,
+    bullishStacked: getStackedRows(clusters, bullishRows),
+    bearishStacked: getStackedRows(clusters, bearishRows),
+  };
+}
+
+function getStackedRows(clusters, rowSet) {
+  const stacked = new Set();
+  let streak = [];
+
+  for (const cluster of clusters) {
+    if (rowSet.has(cluster.price)) {
+      streak.push(cluster.price);
+      continue;
+    }
+    if (streak.length >= 3) streak.forEach((price) => stacked.add(price));
+    streak = [];
+  }
+
+  if (streak.length >= 3) streak.forEach((price) => stacked.add(price));
+  return stacked;
+}
+
+function drawImbalanceMarker(ctx, imbalance, price, centerX, candleW, rowTop, rowH) {
+  if (imbalance.bullishRows.has(price)) {
+    ctx.fillStyle = imbalance.bullishStacked.has(price) ? "rgba(16,185,129,0.95)" : "rgba(16,185,129,0.55)";
+    ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
+  }
+  if (imbalance.bearishRows.has(price)) {
+    ctx.fillStyle = imbalance.bearishStacked.has(price) ? "rgba(239,68,68,0.95)" : "rgba(239,68,68,0.55)";
+    ctx.fillRect(centerX - candleW / 2 + 1, rowTop + 1, 3, Math.max(2, rowH - 2));
+  }
+}
+
+function drawUnfinishedAuction(ctx, clusters, centerX, candleW, rowSize, p2y) {
+  const lowRow = clusters[0];
+  const highRow = clusters.at(-1);
+  if (!lowRow || !highRow) return;
+
+  ctx.fillStyle = AUCTION_COLOR;
+  if (lowRow.buyVol > 0 && lowRow.sellVol > 0) {
+    const y = p2y(lowRow.price + rowSize / 2);
+    ctx.beginPath();
+    ctx.arc(centerX - candleW / 2 - 4, y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (highRow.buyVol > 0 && highRow.sellVol > 0) {
+    const y = p2y(highRow.price + rowSize / 2);
+    ctx.beginPath();
+    ctx.arc(centerX + candleW / 2 + 4, y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawSessionProfile(ctx, visible, chartH, p2y, rowSize) {
+  const profile = new Map();
+  for (const candle of visible) {
+    for (const cluster of candle.clusters || []) {
+      profile.set(cluster.price, (profile.get(cluster.price) || 0) + (cluster.totalVol || 0));
+    }
+  }
+
+  if (profile.size === 0) return;
+
+  let maxVol = 0;
+  let pocPrice = 0;
+  for (const [price, volume] of profile.entries()) {
+    if (volume > maxVol) {
+      maxVol = volume;
+      pocPrice = price;
+    }
+  }
+  if (maxVol <= 0) return;
+
+  for (const [price, volume] of profile.entries()) {
+    const yTop = p2y(price + rowSize);
+    const yBottom = p2y(price);
+    const rowH = Math.abs(yBottom - yTop);
+    const rowTop = Math.min(yTop, yBottom);
+    const width = (volume / maxVol) * PROFILE_MAX_W;
+    ctx.fillStyle = price === pocPrice ? PROFILE_POC : PROFILE_COLOR;
+    ctx.fillRect(0, rowTop, width, Math.max(1, rowH - 0.5));
+  }
+}
+
+function drawDOM(ctx, bids, asks, chartW, chartH, p2y, rowSize) {
+  let maxSize = 0;
+  for (const bid of bids) if (bid.size > maxSize) maxSize = bid.size;
+  for (const ask of asks) if (ask.size > maxSize) maxSize = ask.size;
+  if (maxSize === 0) return;
+
+  const rowH = Math.max(Math.abs(p2y(0) - p2y(rowSize)) - 0.5, 2);
+  const domLeft = chartW - DOM_MAX_W;
+
+  ctx.fillStyle = "rgba(12,15,21,0.60)";
+  ctx.fillRect(domLeft, 0, DOM_MAX_W, chartH);
+  ctx.strokeStyle = "rgba(255,255,255,0.05)";
+  ctx.beginPath();
+  ctx.moveTo(domLeft, 0);
+  ctx.lineTo(domLeft, chartH);
+  ctx.stroke();
+
+  drawDOMSide(ctx, asks, maxSize, domLeft, chartW, chartH, p2y, rowH, RED);
+  drawDOMSide(ctx, bids, maxSize, domLeft, chartW, chartH, p2y, rowH, GREEN);
+}
+
+function drawDOMSide(ctx, levels, maxSize, domLeft, chartW, chartH, p2y, rowH, color) {
+  const isAsk = color === RED;
+  for (const level of levels) {
+    const y = p2y(level.price);
+    if (y < 0 || y > chartH) continue;
+    const width = (level.size / maxSize) * (DOM_MAX_W - 12);
+    ctx.fillStyle = isAsk ? "rgba(239,83,80,0.20)" : "rgba(38,166,154,0.20)";
+    ctx.fillRect(chartW - width, y - rowH / 2, width, rowH);
+    ctx.fillStyle = color;
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(fmtV(level.size), chartW - 4, y);
+  }
+}
+
 function drawVWAP(ctx, visible, startIdx, p2y, i2x) {
   ctx.strokeStyle = "#ffca28";
-  ctx.lineWidth   = 1.5;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   let started = false;
-  for (let vi = 0; vi < visible.length; vi++) {
-    const c = visible[vi];
-    if (c.vwap != null) {
-      const x = i2x(startIdx + vi);
-      const y = p2y(c.vwap);
-      if (!started) { ctx.moveTo(x, y); started = true; }
-      else            ctx.lineTo(x, y);
+  for (let index = 0; index < visible.length; index += 1) {
+    const candle = visible[index];
+    if (candle.vwap == null) continue;
+    const x = i2x(startIdx + index);
+    const y = p2y(candle.vwap);
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
     }
   }
   if (started) ctx.stroke();
 }
 
-/* ─────────────────────────────────────────────────────
-   Helpers
-───────────────────────────────────────────────────── */
-function niceStep(range) {
-  const r = range / 8;
-  const m = Math.pow(10, Math.floor(Math.log10(r)));
-  const n = r / m;
-  if (n <= 1) return m;
-  if (n <= 2) return 2 * m;
-  if (n <= 5) return 5 * m;
-  return 10 * m;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function fmtV(v) {
-  const a = Math.abs(v);
-  if (a >= 1000) return (v / 1000).toFixed(1) + "k";
-  if (a >= 100)  return v.toFixed(0);
-  if (a >= 10)   return v.toFixed(1);
-  if (a >= 1)    return v.toFixed(2);
-  if (a >= 0.01) return v.toFixed(3);
-  return v.toFixed(4);
+function niceStep(range) {
+  const r = range / 8;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(r)));
+  const normalized = r / magnitude;
+  if (normalized <= 1) return magnitude;
+  if (normalized <= 2) return 2 * magnitude;
+  if (normalized <= 5) return 5 * magnitude;
+  return 10 * magnitude;
+}
+
+function fmtV(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 10) return value.toFixed(1);
+  if (abs >= 1) return value.toFixed(2);
+  if (abs >= 0.01) return value.toFixed(3);
+  return value.toFixed(4);
 }

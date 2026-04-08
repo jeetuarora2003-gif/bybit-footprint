@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import useWebSocket from "./hooks/useWebSocket";
 import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
@@ -41,7 +41,7 @@ export default function App() {
     );
 
   // Pass timeframe to useWebSocket so it reconnects on change
-  const { candles, liveCandle, status } = useWebSocket(settings.timeframe);
+  const { candles, liveCandle, status } = useWebSocket(settings.timeframe, settings.tickSize);
 
   const allCandles = liveCandle ? [...candles, liveCandle] : candles;
 

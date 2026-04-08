@@ -31,6 +31,7 @@ type BybitTrade struct {
 	S   string `json:"S"`
 	V   string `json:"v"`
 	P   string `json:"p"`
+	ID  string `json:"i"`
 	Sym string `json:"s"`
 	Seq int64  `json:"seq"`
 	BT  bool   `json:"BT"`
@@ -88,25 +89,25 @@ type BookLevel struct {
 }
 
 type BroadcastMsg struct {
-	CandleOpenTime int64      `json:"candle_open_time"`
-	Open           float64    `json:"open"`
-	High           float64    `json:"high"`
-	Low            float64    `json:"low"`
-	Close          float64    `json:"close"`
-	Clusters       []Cluster  `json:"clusters"`
-	CandleDelta    float64    `json:"candle_delta"`
-	CVD            float64    `json:"cvd"`
-	BuyTrades      int        `json:"buy_trades"`
-	SellTrades     int        `json:"sell_trades"`
-	TotalVolume    float64    `json:"total_volume"`
-	BuyVolume      float64    `json:"buy_volume"`
-	SellVolume     float64    `json:"sell_volume"`
-	OI             float64    `json:"oi"`
-	OIDelta        float64    `json:"oi_delta"`
-	BestBid        float64    `json:"best_bid"`
-	BestBidSize    float64    `json:"best_bid_size"`
-	BestAsk        float64    `json:"best_ask"`
-	BestAskSize    float64    `json:"best_ask_size"`
+	CandleOpenTime int64       `json:"candle_open_time"`
+	Open           float64     `json:"open"`
+	High           float64     `json:"high"`
+	Low            float64     `json:"low"`
+	Close          float64     `json:"close"`
+	Clusters       []Cluster   `json:"clusters"`
+	CandleDelta    float64     `json:"candle_delta"`
+	CVD            float64     `json:"cvd"`
+	BuyTrades      int         `json:"buy_trades"`
+	SellTrades     int         `json:"sell_trades"`
+	TotalVolume    float64     `json:"total_volume"`
+	BuyVolume      float64     `json:"buy_volume"`
+	SellVolume     float64     `json:"sell_volume"`
+	OI             float64     `json:"oi"`
+	OIDelta        float64     `json:"oi_delta"`
+	BestBid        float64     `json:"best_bid"`
+	BestBidSize    float64     `json:"best_bid_size"`
+	BestAsk        float64     `json:"best_ask"`
+	BestAskSize    float64     `json:"best_ask_size"`
 	Bids           []BookLevel `json:"bids"`
 	Asks           []BookLevel `json:"asks"`
 }
@@ -115,9 +116,11 @@ type BroadcastMsg struct {
 //  Candle aggregator
 // ════════════════════════════════════════════════════════════════════
 
-// FIX #4: rowSize = 1.0 (standard BTC tick, matches frontend ROW_SIZE)
-const rowSize = 1.0
+// Bybit BTCUSDT linear priceFilter.tickSize is 0.10 as of 2026-04-08.
+const rowSize = 0.10
 const maxHistory = 500
+const maxSeenTradeIDs = 200000
+const seenTradeIDTrimBatch = 1024
 
 type bucketAccum struct {
 	buyVol  float64
@@ -172,7 +175,7 @@ func (c *Candle) addTrade(price, vol float64, side string, seq int64) {
 		c.delta += vol
 		c.buyVol += vol
 		c.buyTrades++
-	} else {
+	} else if side == "Sell" {
 		b.sellVol += vol
 		c.delta -= vol
 		c.sellVol += vol
@@ -409,26 +412,43 @@ func main() {
 	oi := &OITracker{}
 
 	var (
-		mu           sync.Mutex
-		cvd          float64
-		candle       *Candle
-		lastSeq      int64
-		// FIX #1: completedBars stores closed bars with full cluster data for /history endpoint
+		mu            sync.Mutex
+		cvd           float64
+		candle        *Candle
+		lastSeq       int64
+		seenTradeIDs  []string
+		seenTradeSet  map[string]struct{}
 		completedBars []BroadcastMsg
 	)
+	seenTradeSet = make(map[string]struct{}, maxSeenTradeIDs)
 
 	candleOpenTime := func(tsMs int64) int64 {
 		return tsMs - (tsMs % 60000)
 	}
 
 	// FIX #5: processTrade is called only from single-threaded tradeCh goroutine — no races
-	processTrade := func(price, vol float64, side string, ts, seq int64) {
+	processTrade := func(price, vol float64, side string, ts, seq int64, tradeID string) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		if seq > 0 && seq <= lastSeq {
+		if side != "Buy" && side != "Sell" {
 			return
 		}
+
+		if tradeID != "" {
+			if _, ok := seenTradeSet[tradeID]; ok {
+				return
+			}
+			seenTradeSet[tradeID] = struct{}{}
+			seenTradeIDs = append(seenTradeIDs, tradeID)
+			if len(seenTradeIDs) > maxSeenTradeIDs+seenTradeIDTrimBatch {
+				for _, oldID := range seenTradeIDs[:seenTradeIDTrimBatch] {
+					delete(seenTradeSet, oldID)
+				}
+				seenTradeIDs = seenTradeIDs[seenTradeIDTrimBatch:]
+			}
+		}
+
 		if seq > lastSeq {
 			lastSeq = seq
 		}
@@ -477,14 +497,14 @@ func main() {
 		candle.addTrade(price, vol, side, seq)
 		if side == "Buy" {
 			cvd += vol
-		} else {
+		} else if side == "Sell" {
 			cvd -= vol
 		}
 	}
 
 	// FIX #5: Separate channels for trades (serial) vs orderbook/ticker (parallel)
 	tradeCh := make(chan []byte, 1024)
-	miscCh  := make(chan []byte, 512)
+	miscCh := make(chan []byte, 512)
 
 	// Single-threaded trade processor — preserves order
 	go func() {
@@ -499,42 +519,39 @@ func main() {
 				if price == 0 || vol == 0 {
 					continue
 				}
-				processTrade(price, vol, bt.S, bt.T, bt.Seq)
+				processTrade(price, vol, bt.S, bt.T, bt.Seq, bt.ID)
 			}
 		}
 	}()
 
-	// Worker pool for orderbook + ticker (idempotent, order doesn't matter)
-	const workerCount = 4
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			for raw := range miscCh {
-				s := string(raw)
-				if strings.Contains(s, `"orderbook.`) {
-					var env OrderbookEnvelope
-					if err := json.Unmarshal(raw, &env); err != nil {
-						continue
-					}
-					if env.Type == "snapshot" {
-						ob.applySnapshot(env.Data.B, env.Data.A)
-					} else {
-						ob.applyDelta(env.Data.B, env.Data.A)
-					}
-				} else if strings.Contains(s, `"tickers.`) {
-					var env TickerEnvelope
-					if err := json.Unmarshal(raw, &env); err != nil {
-						continue
-					}
-					if env.Data.OpenInterest != "" {
-						val, _ := strconv.ParseFloat(env.Data.OpenInterest, 64)
-						if val > 0 {
-							oi.update(val)
-						}
+	// Orderbook deltas are order-dependent, so keep misc market data serial.
+	go func() {
+		for raw := range miscCh {
+			s := string(raw)
+			if strings.Contains(s, `"orderbook.`) {
+				var env OrderbookEnvelope
+				if err := json.Unmarshal(raw, &env); err != nil {
+					continue
+				}
+				if env.Type == "snapshot" || env.Data.U == 1 {
+					ob.applySnapshot(env.Data.B, env.Data.A)
+				} else {
+					ob.applyDelta(env.Data.B, env.Data.A)
+				}
+			} else if strings.Contains(s, `"tickers.`) {
+				var env TickerEnvelope
+				if err := json.Unmarshal(raw, &env); err != nil {
+					continue
+				}
+				if env.Data.OpenInterest != "" {
+					val, _ := strconv.ParseFloat(env.Data.OpenInterest, 64)
+					if val > 0 {
+						oi.update(val)
 					}
 				}
 			}
-		}()
-	}
+		}
+	}()
 
 	// ── Bybit reader with exponential backoff ──
 	go func() {

@@ -16,28 +16,28 @@ const INDICATORS = [
 export default function Sidebar({ settings, updateSetting }) {
   return (
     <div className="sidebar">
-      {INDICATORS.map((ind) => {
-        const isToggleable = ind.toggle;
-        const isActive = isToggleable ? settings[ind.key] : false;
+      {INDICATORS.map((indicator) => {
+        const isToggleable = indicator.toggle;
+        const isActive = isToggleable ? settings[indicator.key] : false;
 
         return (
           <button
-            key={ind.key}
+            key={indicator.key}
             className={`sb-item ${isActive ? "sb-item--active" : ""}`}
             onClick={() => {
-              if (isToggleable) updateSetting(ind.key, !settings[ind.key]);
+              if (isToggleable) updateSetting(indicator.key, !settings[indicator.key]);
             }}
-            title={ind.label}
+            title={indicator.label}
           >
-            {ind.color && (
+            {indicator.color && (
               <span
                 className="sb-dot"
-                style={{ background: isActive ? ind.color : "var(--text-muted)" }}
+                style={{ background: isActive ? indicator.color : "var(--text-muted)" }}
               />
             )}
-            <span className="sb-label">{ind.label}</span>
+            <span className="sb-label">{indicator.label}</span>
             {isToggleable && (
-              <span className="sb-toggle-arrow">{isActive ? "▾" : "▸"}</span>
+              <span className="sb-toggle-arrow">{isActive ? "v" : ">"}</span>
             )}
           </button>
         );

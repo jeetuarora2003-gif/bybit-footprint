@@ -1,24 +1,28 @@
 import "./StatusBar.css";
 
-function fmt(v) {
-  if (v == null) return "—";
-  const a = Math.abs(v);
-  if (a >= 1e6) return (v / 1e6).toFixed(2) + "M";
-  if (a >= 1e3) return (v / 1e3).toFixed(1) + "K";
-  return v.toFixed(1);
+function fmt(value) {
+  if (value == null) return "-";
+  const abs = Math.abs(value);
+  if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toFixed(1);
 }
 
 export default function StatusBar({ crosshairData, status, liveCandle }) {
   const now = new Date();
-  const clock = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const clock = now.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const hoveredPrice = crosshairData?.hoveredPrice ?? crosshairData?.close ?? crosshairData?.best_bid ?? crosshairData?.best_ask ?? null;
 
   return (
     <div className="status-bar">
       <div className="stb-left">
         {crosshairData ? (
           <span className="stb-info mono">
-            Price: {crosshairData.price?.toFixed(1)}
+            Hover: {hoveredPrice != null ? hoveredPrice.toFixed(1) : "-"}
           </span>
         ) : (
           <span className="stb-info">Crosshair</span>
@@ -26,12 +30,12 @@ export default function StatusBar({ crosshairData, status, liveCandle }) {
         <span className="stb-sep">|</span>
         <span className="stb-info">
           CVD: <span style={{ color: liveCandle?.cvd >= 0 ? "var(--green)" : "var(--red)" }}>
-            {liveCandle ? fmt(liveCandle.cvd) : "—"}
+            {liveCandle ? fmt(liveCandle.cvd) : "-"}
           </span>
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">
-          OI: {liveCandle?.oi ? fmt(liveCandle.oi) : "—"}
+          OI: {liveCandle?.oi ? fmt(liveCandle.oi) : "-"}
         </span>
       </div>
 
