@@ -5,6 +5,7 @@ const PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
 const IS_LOCAL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 const BASE_WS = IS_LOCAL ? "ws://localhost:8080" : `${PROTOCOL}//${HOST}`;
 const BASE_HTTP = IS_LOCAL ? "http://localhost:8080" : "";
+const HISTORY_LIMIT = 5000;
 
 function normalizeBookLevels(levels) {
   return (levels || []).map((level) => ({
@@ -31,6 +32,12 @@ function normalizeClusters(clusters) {
 
 function normalizeCandle(candle) {
   if (!candle) return null;
+  const buyTrades = Number(candle.buy_trades) || 0;
+  const sellTrades = Number(candle.sell_trades) || 0;
+  const buyVolume = Number(candle.buy_volume) || 0;
+  const sellVolume = Number(candle.sell_volume) || 0;
+  const orderflowCoverage = Number(candle.orderflow_coverage);
+  const inferredCoverage = candle?.clusters?.length || buyTrades > 0 || sellTrades > 0 || buyVolume > 0 || sellVolume > 0 ? 1 : 0;
   return {
     ...candle,
     candle_open_time: Number(candle.candle_open_time) || 0,
@@ -41,11 +48,11 @@ function normalizeCandle(candle) {
     row_size: Number(candle.row_size) || 0,
     candle_delta: Number(candle.candle_delta) || 0,
     cvd: Number(candle.cvd) || 0,
-    buy_trades: Number(candle.buy_trades) || 0,
-    sell_trades: Number(candle.sell_trades) || 0,
+    buy_trades: buyTrades,
+    sell_trades: sellTrades,
     total_volume: Number(candle.total_volume) || 0,
-    buy_volume: Number(candle.buy_volume) || 0,
-    sell_volume: Number(candle.sell_volume) || 0,
+    buy_volume: buyVolume,
+    sell_volume: sellVolume,
     oi: Number(candle.oi) || 0,
     oi_delta: Number(candle.oi_delta) || 0,
     best_bid: Number(candle.best_bid) || 0,
@@ -57,6 +64,8 @@ function normalizeCandle(candle) {
     clusters: normalizeClusters(candle.clusters),
     bids: normalizeBookLevels(candle.bids),
     asks: normalizeBookLevels(candle.asks),
+    orderflow_coverage: Number.isFinite(orderflowCoverage) ? orderflowCoverage : inferredCoverage,
+    data_source: candle.data_source || (inferredCoverage >= 1 ? "live_trade_footprint" : "bybit_kline_backfill"),
   };
 }
 
@@ -77,6 +86,7 @@ function buildChartQuery(timeframe, tickSize) {
   const params = new URLSearchParams({
     timeframe,
     tickSize,
+    limit: String(HISTORY_LIMIT),
   });
   return params.toString();
 }
@@ -109,8 +119,8 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     }
 
     const keys = [...candleMapRef.current.keys()].sort((a, b) => a - b);
-    if (keys.length > 800) {
-      for (const key of keys.slice(0, keys.length - 800)) {
+    if (keys.length > HISTORY_LIMIT) {
+      for (const key of keys.slice(0, keys.length - HISTORY_LIMIT)) {
         candleMapRef.current.delete(key);
       }
     }

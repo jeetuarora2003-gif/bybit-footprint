@@ -39,6 +39,7 @@ export default function StatusBar({
   const hoveredPrice = crosshairData?.hoveredPrice ?? crosshairData?.close ?? crosshairData?.best_bid ?? crosshairData?.best_ask ?? null;
   const hoveredCluster = crosshairData?.hoveredCluster ?? null;
   const referenceCandle = crosshairData ?? liveCandle;
+  const hasReliableOrderflow = Number(referenceCandle?.orderflow_coverage ?? 0) >= 0.999;
   const replayTime = replay?.enabled && liveCandle?.candle_open_time
     ? new Date(Number(liveCandle.candle_open_time)).toLocaleTimeString([], {
       hour: "2-digit",
@@ -76,7 +77,7 @@ export default function StatusBar({
         <span className="stb-sep">|</span>
         <span className="stb-info">
           CVD: <span style={{ color: referenceCandle?.cvd >= 0 ? "#42a5f5" : "var(--red)" }}>
-            {referenceCandle ? formatSignedCompactValue(referenceCandle.cvd) : "-"}
+            {referenceCandle ? (hasReliableOrderflow ? formatSignedCompactValue(referenceCandle.cvd) : "-") : "-"}
           </span>
         </span>
         <span className="stb-sep">|</span>

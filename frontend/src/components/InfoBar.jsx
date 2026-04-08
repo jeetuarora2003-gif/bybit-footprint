@@ -22,7 +22,8 @@ const CLUSTER_LABELS = {
 
 export default function InfoBar({ candle, settings }) {
   const current = candle;
-  const imbalance = summarizeCandleImbalance(current);
+  const hasReliableOrderflow = Number(current?.orderflow_coverage ?? 0) >= 0.999;
+  const imbalance = hasReliableOrderflow ? summarizeCandleImbalance(current) : null;
 
   return (
     <div className="info-bar">
@@ -46,7 +47,7 @@ export default function InfoBar({ candle, settings }) {
         <span className="ib-val">{current ? formatCompactValue(current.total_volume) : "-"}</span>
         <span className="ib-label">Delta:</span>
         <span className="ib-val" style={{ color: current?.candle_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-          {current ? formatSignedCompactValue(current.candle_delta) : "-"}
+          {current ? (hasReliableOrderflow ? formatSignedCompactValue(current.candle_delta) : "-") : "-"}
         </span>
       </div>
 

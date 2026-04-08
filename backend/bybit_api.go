@@ -11,6 +11,7 @@ import (
 )
 
 const bybitRESTBase = "https://api.bybit.com"
+const maxBackfillPages = 128
 
 type bybitAPIResponse[T any] struct {
 	RetCode int    `json:"retCode"`
@@ -35,6 +36,10 @@ type bybitTickerResult struct {
 	List []TickerData `json:"list"`
 }
 
+type bybitKlineResult struct {
+	List [][]string `json:"list"`
+}
+
 type bybitOpenInterestResult struct {
 	List           []bybitOpenInterestItem `json:"list"`
 	NextPageCursor string                  `json:"nextPageCursor"`
@@ -48,6 +53,15 @@ type bybitOpenInterestItem struct {
 type officialOISnapshot struct {
 	Timestamp    int64
 	OpenInterest float64
+}
+
+type officialKlineBar struct {
+	OpenTime int64
+	Open     float64
+	High     float64
+	Low      float64
+	Close    float64
+	Volume   float64
 }
 
 func fetchBybitJSON[T any](client *http.Client, path string, params url.Values, out *T) error {
@@ -140,16 +154,102 @@ func fetchBybitCurrentOpenInterest(client *http.Client, symbol string) (float64,
 	return round6(value), nil
 }
 
-func fetchBybitOpenInterestHistory(client *http.Client, symbol string, earliestTs int64) ([]officialOISnapshot, error) {
+func fetchBybitKlineRange(client *http.Client, symbol string, startTs, endTs int64) ([]officialKlineBar, error) {
+	if startTs <= 0 || endTs <= 0 || endTs < startTs {
+		return nil, nil
+	}
+
+	const pageLimit = 1000
+	barsByOpenTime := make(map[int64]officialKlineBar)
+	nextEnd := endTs
+
+	for page := 0; page < maxBackfillPages; page += 1 {
+		params := url.Values{
+			"category": []string{"linear"},
+			"symbol":   []string{symbol},
+			"interval": []string{"1"},
+			"start":    []string{strconv.FormatInt(startTs, 10)},
+			"end":      []string{strconv.FormatInt(nextEnd, 10)},
+			"limit":    []string{strconv.Itoa(pageLimit)},
+		}
+
+		var result bybitKlineResult
+		if err := fetchBybitJSON(client, "/v5/market/kline", params, &result); err != nil {
+			return nil, err
+		}
+		if len(result.List) == 0 {
+			break
+		}
+
+		oldestTs := int64(0)
+		for _, item := range result.List {
+			if len(item) < 7 {
+				continue
+			}
+			openTime, errTs := strconv.ParseInt(item[0], 10, 64)
+			open, errOpen := strconv.ParseFloat(item[1], 64)
+			high, errHigh := strconv.ParseFloat(item[2], 64)
+			low, errLow := strconv.ParseFloat(item[3], 64)
+			closePrice, errClose := strconv.ParseFloat(item[4], 64)
+			volume, errVolume := strconv.ParseFloat(item[5], 64)
+			if errTs != nil || errOpen != nil || errHigh != nil || errLow != nil || errClose != nil || errVolume != nil {
+				continue
+			}
+			if openTime < startTs || openTime > endTs {
+				continue
+			}
+
+			barsByOpenTime[openTime] = officialKlineBar{
+				OpenTime: openTime,
+				Open:     round6(open),
+				High:     round6(high),
+				Low:      round6(low),
+				Close:    round6(closePrice),
+				Volume:   round6(volume),
+			}
+			if oldestTs == 0 || openTime < oldestTs {
+				oldestTs = openTime
+			}
+		}
+
+		if oldestTs == 0 || oldestTs <= startTs {
+			break
+		}
+		nextEnd = oldestTs - int64(time.Minute/time.Millisecond)
+		if nextEnd < startTs {
+			break
+		}
+	}
+
+	bars := make([]officialKlineBar, 0, len(barsByOpenTime))
+	for _, bar := range barsByOpenTime {
+		bars = append(bars, bar)
+	}
+	sort.Slice(bars, func(i, j int) bool {
+		return bars[i].OpenTime < bars[j].OpenTime
+	})
+	return bars, nil
+}
+
+func fetchBybitOpenInterestHistory(client *http.Client, symbol string, earliestTs, latestTs int64) ([]officialOISnapshot, error) {
+	if earliestTs <= 0 {
+		return nil, nil
+	}
+	if latestTs <= 0 || latestTs < earliestTs {
+		latestTs = time.Now().UnixMilli()
+	}
+
 	cursor := ""
 	snapshotsByTs := make(map[int64]officialOISnapshot)
 
-	for page := 0; page < 8; page += 1 {
+	for page := 0; page < maxBackfillPages; page += 1 {
 		params := url.Values{
 			"category":     []string{"linear"},
 			"symbol":       []string{symbol},
 			"intervalTime": []string{"5min"},
 			"limit":        []string{"200"},
+			"startTime":    []string{strconv.FormatInt(earliestTs, 10)},
+			"endTime":      []string{strconv.FormatInt(latestTs, 10)},
 		}
 		if cursor != "" {
 			params.Set("cursor", cursor)

@@ -150,6 +150,7 @@ func aggregateBroadcastBars(source []BroadcastMsg, timeframe string, tickMultipl
 	}
 
 	frames := make([]BroadcastMsg, 0, len(source))
+	frameCounts := make([]int, 0, len(source))
 	var current *BroadcastMsg
 
 	for _, candle := range source {
@@ -159,22 +160,27 @@ func aggregateBroadcastBars(source []BroadcastMsg, timeframe string, tickMultipl
 		openTime := frameOpenTime(candle.CandleOpenTime, timeframe)
 		if current == nil || current.CandleOpenTime != openTime {
 			frame := BroadcastMsg{
-				CandleOpenTime: openTime,
-				Open:           candle.Open,
-				High:           candle.High,
-				Low:            candle.Low,
-				Close:          candle.Close,
-				RowSize:        targetRowSize,
-				BestBid:        candle.BestBid,
-				BestBidSize:    candle.BestBidSize,
-				BestAsk:        candle.BestAsk,
-				BestAskSize:    candle.BestAskSize,
-				Bids:           copyBookLevels(candle.Bids),
-				Asks:           copyBookLevels(candle.Asks),
-				RecentTrades:   copyTapeTrades(candle.RecentTrades),
+				CandleOpenTime:    openTime,
+				Open:              candle.Open,
+				High:              candle.High,
+				Low:               candle.Low,
+				Close:             candle.Close,
+				RowSize:           targetRowSize,
+				BestBid:           candle.BestBid,
+				BestBidSize:       candle.BestBidSize,
+				BestAsk:           candle.BestAsk,
+				BestAskSize:       candle.BestAskSize,
+				Bids:              copyBookLevels(candle.Bids),
+				Asks:              copyBookLevels(candle.Asks),
+				RecentTrades:      copyTapeTrades(candle.RecentTrades),
+				OrderflowCoverage: 0,
+				DataSource:        candle.DataSource,
 			}
 			frames = append(frames, frame)
+			frameCounts = append(frameCounts, 1)
 			current = &frames[len(frames)-1]
+		} else {
+			frameCounts[len(frameCounts)-1] += 1
 		}
 
 		current.High = math.Max(current.High, candle.High)
@@ -197,6 +203,8 @@ func aggregateBroadcastBars(source []BroadcastMsg, timeframe string, tickMultipl
 		current.Asks = copyBookLevels(candle.Asks)
 		current.RecentTrades = copyTapeTrades(candle.RecentTrades)
 		current.Clusters = append(current.Clusters, candle.Clusters...)
+		current.OrderflowCoverage = round6(current.OrderflowCoverage + math.Max(0, math.Min(1, candle.OrderflowCoverage)))
+		current.DataSource = mergeDataSource(current.DataSource, candle.DataSource)
 	}
 
 	for index := range frames {
@@ -204,9 +212,28 @@ func aggregateBroadcastBars(source []BroadcastMsg, timeframe string, tickMultipl
 		frames[index].Clusters = clusters
 		frames[index].UnfinishedLow = unfinishedLow
 		frames[index].UnfinishedHigh = unfinishedHigh
+		if frameCounts[index] > 0 {
+			frames[index].OrderflowCoverage = round6(frames[index].OrderflowCoverage / float64(frameCounts[index]))
+		}
+		if frames[index].DataSource == "" {
+			frames[index].DataSource = "mixed"
+		}
 	}
 
 	return frames
+}
+
+func mergeDataSource(current, next string) string {
+	switch {
+	case current == "":
+		return next
+	case next == "":
+		return current
+	case current == next:
+		return current
+	default:
+		return "mixed"
+	}
 }
 
 func copyBroadcastBars(src []BroadcastMsg) []BroadcastMsg {
@@ -216,31 +243,33 @@ func copyBroadcastBars(src []BroadcastMsg) []BroadcastMsg {
 	dst := make([]BroadcastMsg, len(src))
 	for i, item := range src {
 		dst[i] = BroadcastMsg{
-			CandleOpenTime: item.CandleOpenTime,
-			Open:           item.Open,
-			High:           item.High,
-			Low:            item.Low,
-			Close:          item.Close,
-			RowSize:        item.RowSize,
-			Clusters:       append([]Cluster(nil), item.Clusters...),
-			CandleDelta:    item.CandleDelta,
-			CVD:            item.CVD,
-			BuyTrades:      item.BuyTrades,
-			SellTrades:     item.SellTrades,
-			TotalVolume:    item.TotalVolume,
-			BuyVolume:      item.BuyVolume,
-			SellVolume:     item.SellVolume,
-			OI:             item.OI,
-			OIDelta:        item.OIDelta,
-			BestBid:        item.BestBid,
-			BestBidSize:    item.BestBidSize,
-			BestAsk:        item.BestAsk,
-			BestAskSize:    item.BestAskSize,
-			Bids:           copyBookLevels(item.Bids),
-			Asks:           copyBookLevels(item.Asks),
-			UnfinishedLow:  item.UnfinishedLow,
-			UnfinishedHigh: item.UnfinishedHigh,
-			RecentTrades:   copyTapeTrades(item.RecentTrades),
+			CandleOpenTime:    item.CandleOpenTime,
+			Open:              item.Open,
+			High:              item.High,
+			Low:               item.Low,
+			Close:             item.Close,
+			RowSize:           item.RowSize,
+			Clusters:          append([]Cluster(nil), item.Clusters...),
+			CandleDelta:       item.CandleDelta,
+			CVD:               item.CVD,
+			BuyTrades:         item.BuyTrades,
+			SellTrades:        item.SellTrades,
+			TotalVolume:       item.TotalVolume,
+			BuyVolume:         item.BuyVolume,
+			SellVolume:        item.SellVolume,
+			OI:                item.OI,
+			OIDelta:           item.OIDelta,
+			BestBid:           item.BestBid,
+			BestBidSize:       item.BestBidSize,
+			BestAsk:           item.BestAsk,
+			BestAskSize:       item.BestAskSize,
+			Bids:              copyBookLevels(item.Bids),
+			Asks:              copyBookLevels(item.Asks),
+			UnfinishedLow:     item.UnfinishedLow,
+			UnfinishedHigh:    item.UnfinishedHigh,
+			RecentTrades:      copyTapeTrades(item.RecentTrades),
+			OrderflowCoverage: item.OrderflowCoverage,
+			DataSource:        item.DataSource,
 		}
 	}
 	return dst

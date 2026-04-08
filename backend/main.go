@@ -120,31 +120,33 @@ type DepthEnvelope struct {
 }
 
 type BroadcastMsg struct {
-	CandleOpenTime int64       `json:"candle_open_time"`
-	Open           float64     `json:"open"`
-	High           float64     `json:"high"`
-	Low            float64     `json:"low"`
-	Close          float64     `json:"close"`
-	RowSize        float64     `json:"row_size"`
-	Clusters       []Cluster   `json:"clusters"`
-	CandleDelta    float64     `json:"candle_delta"`
-	CVD            float64     `json:"cvd"`
-	BuyTrades      int         `json:"buy_trades"`
-	SellTrades     int         `json:"sell_trades"`
-	TotalVolume    float64     `json:"total_volume"`
-	BuyVolume      float64     `json:"buy_volume"`
-	SellVolume     float64     `json:"sell_volume"`
-	OI             float64     `json:"oi"`
-	OIDelta        float64     `json:"oi_delta"`
-	BestBid        float64     `json:"best_bid"`
-	BestBidSize    float64     `json:"best_bid_size"`
-	BestAsk        float64     `json:"best_ask"`
-	BestAskSize    float64     `json:"best_ask_size"`
-	Bids           []BookLevel `json:"bids"`
-	Asks           []BookLevel `json:"asks"`
-	UnfinishedLow  bool        `json:"unfinished_low"`
-	UnfinishedHigh bool        `json:"unfinished_high"`
-	RecentTrades   []TapeTrade `json:"recent_trades,omitempty"`
+	CandleOpenTime    int64       `json:"candle_open_time"`
+	Open              float64     `json:"open"`
+	High              float64     `json:"high"`
+	Low               float64     `json:"low"`
+	Close             float64     `json:"close"`
+	RowSize           float64     `json:"row_size"`
+	Clusters          []Cluster   `json:"clusters"`
+	CandleDelta       float64     `json:"candle_delta"`
+	CVD               float64     `json:"cvd"`
+	BuyTrades         int         `json:"buy_trades"`
+	SellTrades        int         `json:"sell_trades"`
+	TotalVolume       float64     `json:"total_volume"`
+	BuyVolume         float64     `json:"buy_volume"`
+	SellVolume        float64     `json:"sell_volume"`
+	OI                float64     `json:"oi"`
+	OIDelta           float64     `json:"oi_delta"`
+	BestBid           float64     `json:"best_bid"`
+	BestBidSize       float64     `json:"best_bid_size"`
+	BestAsk           float64     `json:"best_ask"`
+	BestAskSize       float64     `json:"best_ask_size"`
+	Bids              []BookLevel `json:"bids"`
+	Asks              []BookLevel `json:"asks"`
+	UnfinishedLow     bool        `json:"unfinished_low"`
+	UnfinishedHigh    bool        `json:"unfinished_high"`
+	RecentTrades      []TapeTrade `json:"recent_trades,omitempty"`
+	OrderflowCoverage float64     `json:"orderflow_coverage"`
+	DataSource        string      `json:"data_source,omitempty"`
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -153,11 +155,11 @@ type BroadcastMsg struct {
 
 // Bybit BTCUSDT linear priceFilter.tickSize is 0.10 as of 2026-04-08.
 const rowSize = 0.10
-const maxHistory = 1500
+const maxHistory = 20000
 const maxSeenTradeIDs = 200000
 const seenTradeIDTrimBatch = 1024
-const maxRecentTrades = 1500
-const maxRecentDepthSnapshots = 12000
+const maxRecentTrades = 5000
+const maxRecentDepthSnapshots = 24000
 
 type bucketAccum struct {
 	buyVol     float64
@@ -635,7 +637,7 @@ func main() {
 	if loadedBars, loadedTrades, loadedDepth, err := store.Load(); err != nil {
 		log.Printf("[store] load failed, starting empty: %v", err)
 	} else {
-		completedBars = loadedBars
+		completedBars = normalizeStoredBars(loadedBars)
 		recentTrades = loadedTrades
 		recentDepth = loadedDepth
 		log.Printf("[store] loaded %d bars, %d tape prints, %d depth snapshots", len(completedBars), len(recentTrades), len(recentDepth))
@@ -645,14 +647,12 @@ func main() {
 		return tsMs - (tsMs % 60000)
 	}
 
-	if len(completedBars) > 0 {
-		earliestTs := completedBars[0].CandleOpenTime
-		if snapshots, err := fetchBybitOpenInterestHistory(restClient, "BTCUSDT", earliestTs); err != nil {
-			log.Printf("[bybit] OI history seed failed: %v", err)
-		} else if applyOfficialOpenInterest(completedBars, snapshots) {
-			if err := store.ReplaceBars(completedBars); err != nil {
-				log.Printf("[store] bar rewrite failed: %v", err)
-			}
+	if hydratedBars, err := hydrateHistoricalBars(restClient, "BTCUSDT", completedBars); err != nil {
+		log.Printf("[bybit] historical backfill failed: %v", err)
+	} else {
+		completedBars = hydratedBars
+		if err := store.ReplaceBars(completedBars); err != nil {
+			log.Printf("[store] bar rewrite failed: %v", err)
 		}
 	}
 
@@ -736,30 +736,32 @@ func main() {
 				bidP, bidS, askP, askS := ob.bestBidAsk()
 				bids, asks := ob.topLevels(15)
 				snapshot := BroadcastMsg{
-					CandleOpenTime: candle.openTime,
-					Open:           candle.open,
-					High:           candle.high,
-					Low:            candle.low,
-					Close:          candle.close,
-					RowSize:        rowSize,
-					Clusters:       clusters,
-					CandleDelta:    round6(candle.delta),
-					CVD:            round6(cvd),
-					BuyTrades:      candle.buyTrades,
-					SellTrades:     candle.sellTrades,
-					TotalVolume:    round6(candle.buyVol + candle.sellVol),
-					BuyVolume:      round6(candle.buyVol),
-					SellVolume:     round6(candle.sellVol),
-					OI:             oi.get(),
-					OIDelta:        closedOIDelta,
-					BestBid:        bidP,
-					BestBidSize:    bidS,
-					BestAsk:        askP,
-					BestAskSize:    askS,
-					Bids:           bids,
-					Asks:           asks,
-					UnfinishedLow:  unfinishedLow,
-					UnfinishedHigh: unfinishedHigh,
+					CandleOpenTime:    candle.openTime,
+					Open:              candle.open,
+					High:              candle.high,
+					Low:               candle.low,
+					Close:             candle.close,
+					RowSize:           rowSize,
+					Clusters:          clusters,
+					CandleDelta:       round6(candle.delta),
+					CVD:               round6(cvd),
+					BuyTrades:         candle.buyTrades,
+					SellTrades:        candle.sellTrades,
+					TotalVolume:       round6(candle.buyVol + candle.sellVol),
+					BuyVolume:         round6(candle.buyVol),
+					SellVolume:        round6(candle.sellVol),
+					OI:                oi.get(),
+					OIDelta:           closedOIDelta,
+					BestBid:           bidP,
+					BestBidSize:       bidS,
+					BestAsk:           askP,
+					BestAskSize:       askS,
+					Bids:              bids,
+					Asks:              asks,
+					UnfinishedLow:     unfinishedLow,
+					UnfinishedHigh:    unfinishedHigh,
+					OrderflowCoverage: 1,
+					DataSource:        "live_trade_footprint",
 				}
 				completedBars = append(completedBars, snapshot)
 				// Cap history to last maxHistory bars
@@ -891,31 +893,33 @@ func main() {
 			}
 
 			msg := BroadcastMsg{
-				CandleOpenTime: candle.openTime,
-				Open:           candle.open,
-				High:           candle.high,
-				Low:            candle.low,
-				Close:          candle.close,
-				RowSize:        rowSize,
-				Clusters:       clusters,
-				CandleDelta:    round6(candle.delta),
-				CVD:            round6(cvd),
-				BuyTrades:      candle.buyTrades,
-				SellTrades:     candle.sellTrades,
-				TotalVolume:    round6(candle.buyVol + candle.sellVol),
-				BuyVolume:      round6(candle.buyVol),
-				SellVolume:     round6(candle.sellVol),
-				OI:             oi.get(),
-				OIDelta:        oi.delta(),
-				BestBid:        bidP,
-				BestBidSize:    bidS,
-				BestAsk:        askP,
-				BestAskSize:    askS,
-				Bids:           bids,
-				Asks:           asks,
-				UnfinishedLow:  unfinishedLow,
-				UnfinishedHigh: unfinishedHigh,
-				RecentTrades:   tape,
+				CandleOpenTime:    candle.openTime,
+				Open:              candle.open,
+				High:              candle.high,
+				Low:               candle.low,
+				Close:             candle.close,
+				RowSize:           rowSize,
+				Clusters:          clusters,
+				CandleDelta:       round6(candle.delta),
+				CVD:               round6(cvd),
+				BuyTrades:         candle.buyTrades,
+				SellTrades:        candle.sellTrades,
+				TotalVolume:       round6(candle.buyVol + candle.sellVol),
+				BuyVolume:         round6(candle.buyVol),
+				SellVolume:        round6(candle.sellVol),
+				OI:                oi.get(),
+				OIDelta:           oi.delta(),
+				BestBid:           bidP,
+				BestBidSize:       bidS,
+				BestAsk:           askP,
+				BestAskSize:       askS,
+				Bids:              bids,
+				Asks:              asks,
+				UnfinishedLow:     unfinishedLow,
+				UnfinishedHigh:    unfinishedHigh,
+				RecentTrades:      tape,
+				OrderflowCoverage: 1,
+				DataSource:        "live_trade_footprint",
 			}
 			historySnapshot := copyBroadcastBars(completedBars)
 			mu.Unlock()
@@ -938,6 +942,19 @@ func main() {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
+	parseHistoryLimit := func(raw string) int {
+		if raw == "" {
+			return 5000
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			return 5000
+		}
+		if value > maxHistory {
+			return maxHistory
+		}
+		return value
+	}
 
 	// FIX #1: /history returns completed bars with full clusters for frontend preload
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
@@ -945,10 +962,15 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		timeframe := normalizeTimeframe(r.URL.Query().Get("timeframe"))
 		tickMultiplier := parseTickMultiplier(r.URL.Query().Get("tickSize"))
+		limit := parseHistoryLimit(r.URL.Query().Get("limit"))
 		mu.Lock()
 		historySnapshot := copyBroadcastBars(completedBars)
 		mu.Unlock()
-		data, err := json.Marshal(aggregateBroadcastBars(historySnapshot, timeframe, tickMultiplier))
+		aggregated := aggregateBroadcastBars(historySnapshot, timeframe, tickMultiplier)
+		if len(aggregated) > limit {
+			aggregated = aggregated[len(aggregated)-limit:]
+		}
+		data, err := json.Marshal(aggregated)
 		if err != nil {
 			http.Error(w, "marshal error", 500)
 			return
