@@ -19,7 +19,6 @@ import (
 //  Bybit V5 inbound types
 // ════════════════════════════════════════════════════════════════════
 
-// --- publicTrade ---
 type TradeEnvelope struct {
 	Topic string       `json:"topic"`
 	Type  string       `json:"type"`
@@ -29,15 +28,14 @@ type TradeEnvelope struct {
 
 type BybitTrade struct {
 	T   int64  `json:"T"`
-	S   string `json:"S"` // "Buy" or "Sell" (taker side)
+	S   string `json:"S"`
 	V   string `json:"v"`
 	P   string `json:"p"`
 	Sym string `json:"s"`
-	Seq int64  `json:"seq"` // sequence number for ordering
+	Seq int64  `json:"seq"`
 	BT  bool   `json:"BT"`
 }
 
-// --- orderbook ---
 type OrderbookEnvelope struct {
 	Topic string        `json:"topic"`
 	Type  string        `json:"type"`
@@ -46,14 +44,13 @@ type OrderbookEnvelope struct {
 }
 
 type OrderbookData struct {
-	S string     `json:"s"`
-	B [][]string `json:"b"` // bids: [price, size]
-	A [][]string `json:"a"` // asks: [price, size]
-	U int64      `json:"u"` // update id
-	Seq int64    `json:"seq"`
+	S   string     `json:"s"`
+	B   [][]string `json:"b"`
+	A   [][]string `json:"a"`
+	U   int64      `json:"u"`
+	Seq int64      `json:"seq"`
 }
 
-// --- ticker ---
 type TickerEnvelope struct {
 	Topic string     `json:"topic"`
 	Type  string     `json:"type"`
@@ -74,7 +71,7 @@ type TickerData struct {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Outbound types (to frontend via ws://localhost:8080)
+//  Outbound types
 // ════════════════════════════════════════════════════════════════════
 
 type Cluster struct {
@@ -91,41 +88,36 @@ type BookLevel struct {
 }
 
 type BroadcastMsg struct {
-	// Candle OHLC
-	CandleOpenTime int64     `json:"candle_open_time"`
-	Open           float64   `json:"open"`
-	High           float64   `json:"high"`
-	Low            float64   `json:"low"`
-	Close          float64   `json:"close"`
-	// Clusters
-	Clusters    []Cluster `json:"clusters"`
-	CandleDelta float64  `json:"candle_delta"`
-	CVD         float64   `json:"cvd"`
-	// Trade counts
-	BuyTrades  int `json:"buy_trades"`
-	SellTrades int `json:"sell_trades"`
-	// Volume
-	TotalVolume float64 `json:"total_volume"`
-	BuyVolume   float64 `json:"buy_volume"`
-	SellVolume  float64 `json:"sell_volume"`
-	// Open Interest
-	OI      float64 `json:"oi"`
-	OIDelta float64 `json:"oi_delta"`
-	// Best bid/ask
-	BestBid      float64 `json:"best_bid"`
-	BestBidSize  float64 `json:"best_bid_size"`
-	BestAsk      float64 `json:"best_ask"`
-	BestAskSize  float64 `json:"best_ask_size"`
-	// Orderbook depth (top 15 levels each side)
-	Bids []BookLevel `json:"bids"`
-	Asks []BookLevel `json:"asks"`
+	CandleOpenTime int64      `json:"candle_open_time"`
+	Open           float64    `json:"open"`
+	High           float64    `json:"high"`
+	Low            float64    `json:"low"`
+	Close          float64    `json:"close"`
+	Clusters       []Cluster  `json:"clusters"`
+	CandleDelta    float64    `json:"candle_delta"`
+	CVD            float64    `json:"cvd"`
+	BuyTrades      int        `json:"buy_trades"`
+	SellTrades     int        `json:"sell_trades"`
+	TotalVolume    float64    `json:"total_volume"`
+	BuyVolume      float64    `json:"buy_volume"`
+	SellVolume     float64    `json:"sell_volume"`
+	OI             float64    `json:"oi"`
+	OIDelta        float64    `json:"oi_delta"`
+	BestBid        float64    `json:"best_bid"`
+	BestBidSize    float64    `json:"best_bid_size"`
+	BestAsk        float64    `json:"best_ask"`
+	BestAskSize    float64    `json:"best_ask_size"`
+	Bids           []BookLevel `json:"bids"`
+	Asks           []BookLevel `json:"asks"`
 }
 
 // ════════════════════════════════════════════════════════════════════
 //  Candle aggregator
 // ════════════════════════════════════════════════════════════════════
 
-const rowSize = 0.5
+// FIX #4: rowSize = 1.0 (standard BTC tick, matches frontend ROW_SIZE)
+const rowSize = 1.0
+const maxHistory = 500
 
 type bucketAccum struct {
 	buyVol  float64
@@ -213,7 +205,7 @@ func round6(v float64) float64 {
 
 type OrderBook struct {
 	mu   sync.RWMutex
-	bids map[string]float64 // price -> size
+	bids map[string]float64
 	asks map[string]float64
 }
 
@@ -244,14 +236,26 @@ func (ob *OrderBook) applyDelta(b, a [][]string) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 	for _, lev := range b {
-		if len(lev) < 2 { continue }
+		if len(lev) < 2 {
+			continue
+		}
 		s, _ := strconv.ParseFloat(lev[1], 64)
-		if s == 0 { delete(ob.bids, lev[0]) } else { ob.bids[lev[0]] = s }
+		if s == 0 {
+			delete(ob.bids, lev[0])
+		} else {
+			ob.bids[lev[0]] = s
+		}
 	}
 	for _, lev := range a {
-		if len(lev) < 2 { continue }
+		if len(lev) < 2 {
+			continue
+		}
 		s, _ := strconv.ParseFloat(lev[1], 64)
-		if s == 0 { delete(ob.asks, lev[0]) } else { ob.asks[lev[0]] = s }
+		if s == 0 {
+			delete(ob.asks, lev[0])
+		} else {
+			ob.asks[lev[0]] = s
+		}
 	}
 }
 
@@ -261,14 +265,22 @@ func (ob *OrderBook) bestBidAsk() (bidP, bidS, askP, askS float64) {
 	bidP = 0
 	for p, s := range ob.bids {
 		pf, _ := strconv.ParseFloat(p, 64)
-		if pf > bidP { bidP = pf; bidS = s }
+		if pf > bidP {
+			bidP = pf
+			bidS = s
+		}
 	}
 	askP = math.MaxFloat64
 	for p, s := range ob.asks {
 		pf, _ := strconv.ParseFloat(p, 64)
-		if pf < askP { askP = pf; askS = s }
+		if pf < askP {
+			askP = pf
+			askS = s
+		}
 	}
-	if askP == math.MaxFloat64 { askP = 0 }
+	if askP == math.MaxFloat64 {
+		askP = 0
+	}
 	return
 }
 
@@ -282,7 +294,9 @@ func (ob *OrderBook) topLevels(n int) (bids, asks []BookLevel) {
 		bids = append(bids, BookLevel{Price: pf, Size: s})
 	}
 	sort.Slice(bids, func(i, j int) bool { return bids[i].Price > bids[j].Price })
-	if len(bids) > n { bids = bids[:n] }
+	if len(bids) > n {
+		bids = bids[:n]
+	}
 
 	asks = make([]BookLevel, 0, len(ob.asks))
 	for p, s := range ob.asks {
@@ -290,7 +304,9 @@ func (ob *OrderBook) topLevels(n int) (bids, asks []BookLevel) {
 		asks = append(asks, BookLevel{Price: pf, Size: s})
 	}
 	sort.Slice(asks, func(i, j int) bool { return asks[i].Price < asks[j].Price })
-	if len(asks) > n { asks = asks[:n] }
+	if len(asks) > n {
+		asks = asks[:n]
+	}
 	return
 }
 
@@ -301,7 +317,7 @@ func (ob *OrderBook) topLevels(n int) (bids, asks []BookLevel) {
 type OITracker struct {
 	mu      sync.RWMutex
 	current float64
-	prevBar float64 // OI at previous bar close
+	prevBar float64
 }
 
 func (oi *OITracker) update(val float64) {
@@ -331,7 +347,7 @@ func (oi *OITracker) delta() float64 {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Hub: fan-out to frontend WS clients
+//  Hub
 // ════════════════════════════════════════════════════════════════════
 
 type hub struct {
@@ -342,15 +358,21 @@ type hub struct {
 func newHub() *hub { return &hub{clients: make(map[*websocket.Conn]struct{})} }
 
 func (h *hub) add(c *websocket.Conn) {
-	h.mu.Lock(); h.clients[c] = struct{}{}; h.mu.Unlock()
+	h.mu.Lock()
+	h.clients[c] = struct{}{}
+	h.mu.Unlock()
 }
 
 func (h *hub) remove(c *websocket.Conn) {
-	h.mu.Lock(); delete(h.clients, c); h.mu.Unlock(); c.Close()
+	h.mu.Lock()
+	delete(h.clients, c)
+	h.mu.Unlock()
+	c.Close()
 }
 
 func (h *hub) broadcast(data []byte) {
-	h.mu.RLock(); defer h.mu.RUnlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	for c := range h.clients {
 		if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
 			go h.remove(c)
@@ -371,7 +393,9 @@ const (
 
 func backoffDuration(attempt int) time.Duration {
 	d := time.Duration(float64(baseBackoff) * math.Pow(backoffFactor, float64(attempt)))
-	if d > maxBackoff { d = maxBackoff }
+	if d > maxBackoff {
+		d = maxBackoff
+	}
 	return d
 }
 
@@ -385,32 +409,68 @@ func main() {
 	oi := &OITracker{}
 
 	var (
-		mu        sync.Mutex
-		cvd       float64
-		candle    *Candle
-		prevOIDelta float64
-		lastSeq   int64
+		mu           sync.Mutex
+		cvd          float64
+		candle       *Candle
+		lastSeq      int64
+		// FIX #1: completedBars stores closed bars with full cluster data for /history endpoint
+		completedBars []BroadcastMsg
 	)
 
 	candleOpenTime := func(tsMs int64) int64 {
-		return tsMs - (tsMs % 60000) // 1-minute bars
+		return tsMs - (tsMs % 60000)
 	}
 
+	// FIX #5: processTrade is called only from single-threaded tradeCh goroutine — no races
 	processTrade := func(price, vol float64, side string, ts, seq int64) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		// Sequence check: skip duplicates
 		if seq > 0 && seq <= lastSeq {
 			return
 		}
-		if seq > lastSeq { lastSeq = seq }
+		if seq > lastSeq {
+			lastSeq = seq
+		}
 
 		openT := candleOpenTime(ts)
 		if candle == nil || openT != candle.openTime {
-			// Bar rotated — snapshot OI delta
-			if candle != nil {
-				prevOIDelta = oi.barClose()
+			// FIX #1 + #6: Snapshot the closing bar (with full clusters + closed OI delta) into completedBars
+			if candle != nil && candle.hasTick {
+				closedOIDelta := oi.barClose()
+				bidP, bidS, askP, askS := ob.bestBidAsk()
+				bids, asks := ob.topLevels(15)
+				snapshot := BroadcastMsg{
+					CandleOpenTime: candle.openTime,
+					Open:           candle.open,
+					High:           candle.high,
+					Low:            candle.low,
+					Close:          candle.close,
+					Clusters:       candle.toClusters(),
+					CandleDelta:    round6(candle.delta),
+					CVD:            round6(cvd),
+					BuyTrades:      candle.buyTrades,
+					SellTrades:     candle.sellTrades,
+					TotalVolume:    round6(candle.buyVol + candle.sellVol),
+					BuyVolume:      round6(candle.buyVol),
+					SellVolume:     round6(candle.sellVol),
+					OI:             oi.get(),
+					OIDelta:        closedOIDelta,
+					BestBid:        bidP,
+					BestBidSize:    bidS,
+					BestAsk:        askP,
+					BestAskSize:    askS,
+					Bids:           bids,
+					Asks:           asks,
+				}
+				completedBars = append(completedBars, snapshot)
+				// Cap history to last maxHistory bars
+				if len(completedBars) > maxHistory {
+					completedBars = completedBars[len(completedBars)-maxHistory:]
+				}
+			} else if candle != nil {
+				// bar rotated but had no ticks — still advance OI baseline
+				oi.barClose()
 			}
 			candle = newCandle(openT)
 		}
@@ -422,54 +482,56 @@ func main() {
 		}
 	}
 
-	// ── Message router: dispatches raw JSON to the right handler ──
-	processMessage := func(raw []byte) {
-		s := string(raw)
+	// FIX #5: Separate channels for trades (serial) vs orderbook/ticker (parallel)
+	tradeCh := make(chan []byte, 1024)
+	miscCh  := make(chan []byte, 512)
 
-		// Trade messages
-		if strings.Contains(s, `"publicTrade.`) {
+	// Single-threaded trade processor — preserves order
+	go func() {
+		for raw := range tradeCh {
 			var env TradeEnvelope
-			if err := json.Unmarshal(raw, &env); err != nil { return }
+			if err := json.Unmarshal(raw, &env); err != nil {
+				continue
+			}
 			for _, bt := range env.Data {
 				price, _ := strconv.ParseFloat(bt.P, 64)
 				vol, _ := strconv.ParseFloat(bt.V, 64)
-				if price == 0 || vol == 0 { continue }
+				if price == 0 || vol == 0 {
+					continue
+				}
 				processTrade(price, vol, bt.S, bt.T, bt.Seq)
 			}
-			return
 		}
+	}()
 
-		// Orderbook messages
-		if strings.Contains(s, `"orderbook.`) {
-			var env OrderbookEnvelope
-			if err := json.Unmarshal(raw, &env); err != nil { return }
-			if env.Type == "snapshot" {
-				ob.applySnapshot(env.Data.B, env.Data.A)
-			} else {
-				ob.applyDelta(env.Data.B, env.Data.A)
-			}
-			return
-		}
-
-		// Ticker messages
-		if strings.Contains(s, `"tickers.`) {
-			var env TickerEnvelope
-			if err := json.Unmarshal(raw, &env); err != nil { return }
-			if env.Data.OpenInterest != "" {
-				val, _ := strconv.ParseFloat(env.Data.OpenInterest, 64)
-				if val > 0 { oi.update(val) }
-			}
-			return
-		}
-	}
-
-	// ── Worker pool ──
+	// Worker pool for orderbook + ticker (idempotent, order doesn't matter)
 	const workerCount = 4
-	jobCh := make(chan []byte, 512)
 	for i := 0; i < workerCount; i++ {
 		go func() {
-			for raw := range jobCh {
-				processMessage(raw)
+			for raw := range miscCh {
+				s := string(raw)
+				if strings.Contains(s, `"orderbook.`) {
+					var env OrderbookEnvelope
+					if err := json.Unmarshal(raw, &env); err != nil {
+						continue
+					}
+					if env.Type == "snapshot" {
+						ob.applySnapshot(env.Data.B, env.Data.A)
+					} else {
+						ob.applyDelta(env.Data.B, env.Data.A)
+					}
+				} else if strings.Contains(s, `"tickers.`) {
+					var env TickerEnvelope
+					if err := json.Unmarshal(raw, &env); err != nil {
+						continue
+					}
+					if env.Data.OpenInterest != "" {
+						val, _ := strconv.ParseFloat(env.Data.OpenInterest, 64)
+						if val > 0 {
+							oi.update(val)
+						}
+					}
+				}
 			}
 		}()
 	}
@@ -478,13 +540,14 @@ func main() {
 	go func() {
 		attempt := 0
 		for {
-			err := connectBybit(jobCh)
+			err := connectBybit(tradeCh, miscCh)
 			if err != nil {
 				attempt++
 				wait := backoffDuration(attempt - 1)
 				if attempt > maxRetries {
 					log.Printf("[bybit] max retries (%d) exceeded — resetting", maxRetries)
-					attempt = 0; wait = baseBackoff
+					attempt = 0
+					wait = baseBackoff
 				}
 				log.Printf("[bybit] error: %v — retry %d in %v", err, attempt, wait)
 				time.Sleep(wait)
@@ -494,7 +557,7 @@ func main() {
 		}
 	}()
 
-	// ── 500ms broadcast ticker ──
+	// ── 500ms live broadcast ticker ──
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
@@ -531,49 +594,71 @@ func main() {
 				Bids:           bids,
 				Asks:           asks,
 			}
-			_ = prevOIDelta // used during bar rotation
 			mu.Unlock()
 
 			data, err := json.Marshal(msg)
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
 			h.broadcast(data)
 		}
 	}()
 
-	// ── Local WS server on :8080 ──
+	// ── HTTP routes ──
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 
+	// FIX #1: /history returns completed bars with full clusters for frontend preload
+	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		data, err := json.Marshal(completedBars)
+		mu.Unlock()
+		if err != nil {
+			http.Error(w, "marshal error", 500)
+			return
+		}
+		w.Write(data)
+	})
+
+	// ── Local WS server on :8080 ──
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 		log.Printf("[ws] client connected: %s", conn.RemoteAddr())
 		h.add(conn)
 		go func() {
 			defer h.remove(conn)
 			for {
-				if _, _, err := conn.ReadMessage(); err != nil { break }
+				if _, _, err := conn.ReadMessage(); err != nil {
+					break
+				}
 			}
 		}()
 	})
 
 	fmt.Println("▶  Footprint WS server on :8080")
 	fmt.Println("   Streams: publicTrade + orderbook.50 + tickers (BTCUSDT)")
+	fmt.Println("   History endpoint: GET /history")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Bybit V5 WebSocket connection
-//  Subscribes to: publicTrade, orderbook.50, tickers
+//  Bybit V5 WebSocket — FIX #5: separate tradeCh and miscCh
 // ════════════════════════════════════════════════════════════════════
 
-func connectBybit(jobCh chan<- []byte) error {
+func connectBybit(tradeCh chan<- []byte, miscCh chan<- []byte) error {
 	const url = "wss://stream.bybit.com/v5/public/linear"
 
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	conn, _, err := dialer.Dial(url, nil)
-	if err != nil { return fmt.Errorf("dial: %w", err) }
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
 	defer conn.Close()
 
 	log.Println("[bybit] connected — subscribing to 3 topics …")
@@ -590,7 +675,6 @@ func connectBybit(jobCh chan<- []byte) error {
 		return fmt.Errorf("subscribe: %w", err)
 	}
 
-	// Heartbeat every 20s
 	go func() {
 		t := time.NewTicker(20 * time.Second)
 		defer t.Stop()
@@ -601,23 +685,25 @@ func connectBybit(jobCh chan<- []byte) error {
 		}
 	}()
 
-	// Read loop
 	for {
 		_, raw, err := conn.ReadMessage()
-		if err != nil { return fmt.Errorf("read: %w", err) }
-
-		s := string(raw)
-		// Filter: only process trade/orderbook/ticker messages
-		if !strings.Contains(s, `"publicTrade.`) &&
-			!strings.Contains(s, `"orderbook.`) &&
-			!strings.Contains(s, `"tickers.`) {
-			continue
+		if err != nil {
+			return fmt.Errorf("read: %w", err)
 		}
 
-		select {
-		case jobCh <- raw:
-		default:
-			// Worker pool full — drop
+		s := string(raw)
+		if strings.Contains(s, `"publicTrade.`) {
+			// FIX #5: trades go to dedicated serial channel
+			select {
+			case tradeCh <- raw:
+			default:
+				log.Println("[warn] tradeCh full — dropping trade batch")
+			}
+		} else if strings.Contains(s, `"orderbook.`) || strings.Contains(s, `"tickers.`) {
+			select {
+			case miscCh <- raw:
+			default:
+			}
 		}
 	}
 }
