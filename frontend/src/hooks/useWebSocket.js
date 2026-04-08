@@ -109,6 +109,14 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
   const [liveCandle, setLiveCandle] = useState(null);
   const [depthHistory, setDepthHistory] = useState([]);
   const [status, setStatus] = useState("disconnected");
+  const [replayState, setReplayState] = useState({
+    available: false,
+    enabled: false,
+    totalEvents: 0,
+    cursor: 0,
+    startTime: null,
+    currentTime: null,
+  });
 
   const workerRef = useRef(null);
 
@@ -167,6 +175,15 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
         appendDepthSnapshot(payload);
       } else if (type === "status") {
         setStatus(typeof payload === "string" ? payload : "disconnected");
+      } else if (type === "replay") {
+        setReplayState({
+          available: Boolean(payload?.available),
+          enabled: Boolean(payload?.enabled),
+          totalEvents: Number(payload?.totalEvents) || 0,
+          cursor: Number(payload?.cursor) || 0,
+          startTime: Number(payload?.startTime) || null,
+          currentTime: Number(payload?.currentTime) || null,
+        });
       }
     };
 
@@ -196,5 +213,29 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     });
   }, [timeframe, tickSize]);
 
-  return { candles, liveCandle, depthHistory, status };
+  const startReplay = useCallback(() => {
+    workerRef.current?.postMessage({ type: "replay-start" });
+  }, []);
+
+  const stopReplay = useCallback(() => {
+    workerRef.current?.postMessage({ type: "replay-stop" });
+  }, []);
+
+  const stepReplay = useCallback((delta) => {
+    workerRef.current?.postMessage({
+      type: "replay-step",
+      payload: { delta },
+    });
+  }, []);
+
+  return {
+    candles,
+    liveCandle,
+    depthHistory,
+    status,
+    replayState,
+    startReplay,
+    stopReplay,
+    stepReplay,
+  };
 }

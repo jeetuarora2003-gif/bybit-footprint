@@ -264,7 +264,14 @@ export default function Toolbar({
           </>
         ) : (
           <>
-            <button className="tb-btn" onClick={onStartReplay}>Replay</button>
+            <button
+              className="tb-btn"
+              onClick={onStartReplay}
+              disabled={!replay?.available}
+              title={replay?.available ? "Replay recent raw market events" : "Replay unlocks after enough raw events are cached"}
+            >
+              Replay
+            </button>
             <div className="tb-sep" />
           </>
         )}

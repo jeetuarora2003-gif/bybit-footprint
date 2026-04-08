@@ -15,16 +15,20 @@ import {
 import "./App.css";
 
 const REPLAY_SPEEDS = [1, 2, 4, 8];
+const REPLAY_BATCHES = {
+  1: 10,
+  2: 25,
+  4: 50,
+  8: 100,
+};
 
 export default function App() {
   const [settings, setSettings] = useState(DEFAULT_CHART_SETTINGS);
   const [crosshairData, setCrosshairData] = useState(null);
   const [activeFeatureArr, setActiveFeatureArr] = useState(DEFAULT_FEATURES);
   const [viewCommand, setViewCommand] = useState({ type: "reset", nonce: 1 });
-  const [replay, setReplay] = useState({
-    enabled: false,
+  const [replayUi, setReplayUi] = useState({
     playing: false,
-    index: null,
     speed: 1,
   });
 
@@ -59,70 +63,69 @@ export default function App() {
     issueViewCommand("reset");
   };
 
-  const { candles, liveCandle, depthHistory, status } = useWebSocket(settings.timeframe, settings.tickSize);
+  const {
+    candles,
+    liveCandle,
+    depthHistory,
+    status,
+    replayState,
+    startReplay: startReplayEngine,
+    stopReplay: stopReplayEngine,
+    stepReplay: stepReplayEngine,
+  } = useWebSocket(settings.timeframe, settings.tickSize);
   const allCandles = useMemo(() => (liveCandle ? [...candles, liveCandle] : candles), [candles, liveCandle]);
-  const replayMaxIndex = Math.max(0, allCandles.length - 1);
-  const effectiveReplayIndex = replay.enabled
-    ? Math.max(0, Math.min(replay.index ?? replayMaxIndex, replayMaxIndex))
-    : replayMaxIndex;
-  const displayedCandles = useMemo(() => {
-    if (!replay.enabled) return allCandles;
-    return allCandles.slice(0, effectiveReplayIndex + 1);
-  }, [allCandles, effectiveReplayIndex, replay.enabled]);
-  const displayedLiveCandle = replay.enabled ? displayedCandles.at(-1) ?? null : liveCandle;
-  const infoCandle = crosshairData ?? displayedLiveCandle;
+  const replay = {
+    ...replayState,
+    playing: replayState.enabled && replayUi.playing && replayState.cursor < replayState.totalEvents,
+    speed: replayUi.speed,
+  };
+  const infoCandle = crosshairData ?? liveCandle;
+
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
 
     const interval = setInterval(() => {
-      setReplay((current) => {
-        if (!current.enabled || !current.playing) return current;
-        const nextIndex = Math.min(replayMaxIndex, (current.index ?? 0) + 1);
-        if (nextIndex >= replayMaxIndex) {
-          return { ...current, index: replayMaxIndex, playing: false };
-        }
-        return { ...current, index: nextIndex };
-      });
-    }, Math.max(80, 800 / replay.speed));
+      stepReplayEngine(REPLAY_BATCHES[replay.speed] ?? REPLAY_BATCHES[1]);
+    }, 120);
 
     return () => clearInterval(interval);
-  }, [replay.enabled, replay.playing, replay.speed, replayMaxIndex]);
+  }, [replay.cursor, replay.enabled, replay.playing, replay.speed, replay.totalEvents, stepReplayEngine]);
 
   const startReplay = () => {
-    if (allCandles.length < 10) return;
-    const startIndex = Math.max(0, replayMaxIndex - Math.min(120, replayMaxIndex));
-    setReplay({
-      enabled: true,
+    if (!replayState.available) return;
+    startReplayEngine();
+    setReplayUi({
       playing: false,
-      index: startIndex,
       speed: 1,
     });
     issueViewCommand("reset");
   };
 
   const stopReplay = () => {
-    setReplay((current) => ({ ...current, enabled: false, playing: false, index: null }));
+    stopReplayEngine();
+    setReplayUi((current) => ({ ...current, playing: false }));
     issueViewCommand("reset");
   };
 
   const toggleReplayPlayback = () => {
-    setReplay((current) => {
-      if (!current.enabled) return current;
+    setReplayUi((current) => {
+      if (!replayState.enabled) return current;
+      if (replayState.cursor >= replayState.totalEvents) {
+        return { ...current, playing: false };
+      }
       return { ...current, playing: !current.playing };
     });
   };
 
   const stepReplay = (direction) => {
-    setReplay((current) => {
-      if (!current.enabled) return current;
-      const nextIndex = Math.max(0, Math.min(replayMaxIndex, (current.index ?? 0) + direction));
-      return { ...current, index: nextIndex, playing: false };
-    });
+    if (!replayState.enabled) return;
+    setReplayUi((current) => ({ ...current, playing: false }));
+    stepReplayEngine(direction);
   };
 
   const cycleReplaySpeed = () => {
-    setReplay((current) => {
-      if (!current.enabled) return current;
+    setReplayUi((current) => {
+      if (!replayState.enabled) return current;
       const index = REPLAY_SPEEDS.indexOf(current.speed);
       const nextSpeed = REPLAY_SPEEDS[(index + 1) % REPLAY_SPEEDS.length];
       return { ...current, speed: nextSpeed };
@@ -157,7 +160,7 @@ export default function App() {
         <div className="app-chart-area">
           <div className="app-main-chart">
             <ChartCanvas
-              candles={displayedCandles}
+              candles={allCandles}
               depthHistory={depthHistory}
               settings={resolvedSettings}
               activeFeatures={activeFeatures}
@@ -165,13 +168,13 @@ export default function App() {
               viewCommand={viewCommand}
             />
           </div>
-          <SubPanels candles={displayedCandles} activeFeatures={activeFeatures} />
+          <SubPanels candles={allCandles} activeFeatures={activeFeatures} />
         </div>
       </div>
       <StatusBar
         crosshairData={crosshairData}
         status={status}
-        liveCandle={displayedLiveCandle}
+        liveCandle={liveCandle}
         onResetView={() => issueViewCommand("reset")}
         onAutoFitView={() => issueViewCommand("fit")}
         settings={resolvedSettings}

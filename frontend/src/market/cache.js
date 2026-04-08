@@ -1,7 +1,8 @@
 const DB_NAME = "exo-footprint-cache";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const BARS_STORE = "bars";
 const DEPTH_STORE = "depth";
+const TRADES_STORE = "trades";
 
 function requestToPromise(request) {
   return new Promise((resolve, reject) => {
@@ -34,6 +35,9 @@ async function openDb() {
         }
         if (!db.objectStoreNames.contains(DEPTH_STORE)) {
           db.createObjectStore(DEPTH_STORE, { keyPath: "timestamp" });
+        }
+        if (!db.objectStoreNames.contains(TRADES_STORE)) {
+          db.createObjectStore(TRADES_STORE, { keyPath: "event_id" });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -72,20 +76,30 @@ async function getAllFromStore(db, storeName) {
   return rows || [];
 }
 
+function sortTrades(trades) {
+  return (trades || []).sort((a, b) => {
+    const timestampDelta = (Number(a?.timestamp) || 0) - (Number(b?.timestamp) || 0);
+    if (timestampDelta !== 0) return timestampDelta;
+    return (Number(a?.seq) || 0) - (Number(b?.seq) || 0);
+  });
+}
+
 export async function loadCacheSnapshot() {
   const db = await openDb();
   if (!db) {
-    return { bars: [], depth: [] };
+    return { bars: [], depth: [], trades: [] };
   }
 
-  const [bars, depth] = await Promise.all([
+  const [bars, depth, trades] = await Promise.all([
     getAllFromStore(db, BARS_STORE),
     getAllFromStore(db, DEPTH_STORE),
+    getAllFromStore(db, TRADES_STORE),
   ]);
 
   bars.sort((a, b) => a.candle_open_time - b.candle_open_time);
   depth.sort((a, b) => a.timestamp - b.timestamp);
-  return { bars, depth };
+  sortTrades(trades);
+  return { bars, depth, trades };
 }
 
 export async function replaceBars(items, maxCount) {
@@ -134,6 +148,20 @@ export async function appendDepthSnapshot(item, maxCount) {
   const transaction = db.transaction(DEPTH_STORE, "readwrite");
   const store = transaction.objectStore(DEPTH_STORE);
   store.put(item);
+  await trimStoreByCount(store, maxCount);
+  await transactionDone(transaction);
+}
+
+export async function appendTrades(items, maxCount) {
+  const db = await openDb();
+  if (!db || !Array.isArray(items) || items.length === 0) return;
+
+  const transaction = db.transaction(TRADES_STORE, "readwrite");
+  const store = transaction.objectStore(TRADES_STORE);
+  for (const item of items) {
+    if (!item?.event_id) continue;
+    store.put(item);
+  }
   await trimStoreByCount(store, maxCount);
   await transactionDone(transaction);
 }

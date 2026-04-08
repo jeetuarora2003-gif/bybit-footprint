@@ -10,6 +10,7 @@ import {
 import {
   appendBar,
   appendDepthSnapshot,
+  appendTrades,
   loadCacheSnapshot,
   replaceBars,
 } from "../market/cache";
@@ -20,12 +21,17 @@ const DEFAULT_SYMBOL = "BTCUSDT";
 const BASE_ROW_SIZE = 0.1;
 const MAX_HISTORY_BARS = 5000;
 const MAX_DEPTH_HISTORY = 4000;
+const MAX_REPLAY_TRADES = 80_000;
 const MAX_SEEN_TRADE_IDS = 200_000;
 const SEEN_TRADE_ID_TRIM_BATCH = 1024;
 const HEARTBEAT_MS = 20_000;
 const RECONNECT_MS = 2_000;
 const BROADCAST_MS = 500;
 const BOOK_LEVELS = 15;
+const REPLAY_WINDOW_MS = 30 * 60_000;
+const REPLAY_MIN_EVENTS = 50;
+const TRADE_PERSIST_BATCH = 128;
+const TRADE_PERSIST_DEBOUNCE_MS = 1_000;
 
 const engine = createEngine();
 
@@ -39,6 +45,21 @@ self.onmessage = async (event) => {
 
   if (type === "settings") {
     engine.updateSettings(payload || {});
+    return;
+  }
+
+  if (type === "replay-start") {
+    engine.startReplay();
+    return;
+  }
+
+  if (type === "replay-stop") {
+    engine.stopReplay();
+    return;
+  }
+
+  if (type === "replay-step") {
+    engine.stepReplay(Number(payload?.delta) || 0);
     return;
   }
 
@@ -63,6 +84,9 @@ function createEngine() {
     completedBars: [],
     aggregatedHistory: [],
     depthHistory: [],
+    tradeHistory: [],
+    pendingTradePersist: [],
+    tradePersistTimeoutId: null,
     currentCandle: null,
     cvd: 0,
     currentOI: 0,
@@ -77,6 +101,7 @@ function createEngine() {
     seenTradeIds: [],
     seenTradeSet: new Set(),
     lastBroadcastLiveOpenTime: null,
+    replay: createReplayState(),
   };
 
   async function init(payload) {
@@ -89,6 +114,8 @@ function createEngine() {
     state.completedBars = [];
     state.aggregatedHistory = [];
     state.depthHistory = [];
+    state.tradeHistory = [];
+    state.pendingTradePersist = [];
     state.currentCandle = null;
     state.cvd = 0;
     state.currentOI = 0;
@@ -103,21 +130,26 @@ function createEngine() {
     state.seenTradeIds = [];
     state.seenTradeSet = new Set();
     state.lastBroadcastLiveOpenTime = null;
+    state.replay = createReplayState();
     state.status = "loading";
     emitStatus();
 
     try {
       const cached = await loadCacheSnapshot();
       state.completedBars = mergeHistoryBars([], cached.bars).slice(-MAX_HISTORY_BARS);
-      state.depthHistory = (cached.depth || []).slice(-MAX_DEPTH_HISTORY);
+      state.depthHistory = normalizeDepthSnapshots(cached.depth).slice(-MAX_DEPTH_HISTORY);
+      state.tradeHistory = normalizeReplayTrades(cached.trades).slice(-MAX_REPLAY_TRADES);
       seedRuntimeFromHistory();
       recomputeAggregatedHistory();
       emitFullSnapshot();
+      emitReplayState();
     } catch {
       state.completedBars = [];
       state.depthHistory = [];
+      state.tradeHistory = [];
       state.aggregatedHistory = [];
       emitFullSnapshot();
+      emitReplayState();
     }
 
     connect();
@@ -129,6 +161,12 @@ function createEngine() {
     state.timeframe = payload.timeframe || state.timeframe;
     state.tickMultiplier = parseTickMultiplier(payload.tickSize);
     recomputeAggregatedHistory();
+
+    if (state.replay.enabled && state.replay.startMinuteOpen) {
+      restartReplay(state.replay.startMinuteOpen, state.replay.cursor);
+      return;
+    }
+
     emitFullSnapshot();
   }
 
@@ -146,9 +184,16 @@ function createEngine() {
       clearInterval(state.broadcastId);
       state.broadcastId = null;
     }
+    if (state.tradePersistTimeoutId) {
+      clearTimeout(state.tradePersistTimeoutId);
+      state.tradePersistTimeoutId = null;
+    }
     if (state.ws) {
       state.ws.close();
       state.ws = null;
+    }
+    if (state.pendingTradePersist.length > 0) {
+      void flushPendingTrades();
     }
   }
 
@@ -169,6 +214,10 @@ function createEngine() {
       }
       recomputeAggregatedHistory();
       await replaceBars(state.completedBars, MAX_HISTORY_BARS);
+      if (state.replay.enabled && state.replay.startMinuteOpen) {
+        restartReplay(state.replay.startMinuteOpen, state.replay.cursor);
+        return;
+      }
       emitFullSnapshot();
     } catch {
       // Live data can proceed even if the proxy is unavailable.
@@ -337,7 +386,7 @@ function createEngine() {
   }
 
   function startBroadcastLoop() {
-    state.broadcastId = setInterval(async () => {
+    state.broadcastId = setInterval(() => {
       const depthSnapshot = buildDepthSnapshot();
       if (depthSnapshot) {
         state.depthHistory.push(depthSnapshot);
@@ -345,10 +394,16 @@ function createEngine() {
           state.depthHistory = state.depthHistory.slice(-MAX_DEPTH_HISTORY);
         }
         void appendDepthSnapshot(depthSnapshot, MAX_DEPTH_HISTORY);
-        postMessage({
-          type: "depth",
-          payload: depthSnapshot,
-        });
+        if (!state.replay.enabled) {
+          postMessage({
+            type: "depth",
+            payload: depthSnapshot,
+          });
+        }
+      }
+
+      if (state.replay.enabled) {
+        return;
       }
 
       const liveCandle = buildAggregatedLiveCandle();
@@ -420,6 +475,21 @@ function createEngine() {
     if (seq > state.lastTradeSeq) {
       state.lastTradeSeq = seq;
     }
+
+    recordTradeEvent({
+      event_id: buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }),
+      timestamp,
+      price: round6(price),
+      volume: round6(volume),
+      side,
+      seq,
+      trade_id: tradeId,
+      oi: round6(state.currentOI),
+      best_bid: round6(state.bestBid),
+      best_bid_size: round6(state.bestBidSize),
+      best_ask: round6(state.bestAsk),
+      best_ask_size: round6(state.bestAskSize),
+    });
 
     const openTime = timestamp - (timestamp % 60_000);
     if (!state.currentCandle || openTime !== state.currentCandle.openTime) {
@@ -526,6 +596,321 @@ function createEngine() {
     };
   }
 
+  function recordTradeEvent(event) {
+    const normalized = normalizeReplayTrade(event);
+    if (!normalized?.event_id || !normalized.timestamp) return;
+
+    state.tradeHistory.push(normalized);
+    if (state.tradeHistory.length > MAX_REPLAY_TRADES) {
+      state.tradeHistory = state.tradeHistory.slice(-MAX_REPLAY_TRADES);
+    }
+
+    state.pendingTradePersist.push(normalized);
+    if (state.pendingTradePersist.length >= TRADE_PERSIST_BATCH) {
+      void flushPendingTrades();
+    } else if (!state.tradePersistTimeoutId) {
+      state.tradePersistTimeoutId = setTimeout(() => {
+        state.tradePersistTimeoutId = null;
+        void flushPendingTrades();
+      }, TRADE_PERSIST_DEBOUNCE_MS);
+    }
+
+    if (!state.replay.enabled) {
+      emitReplayState();
+    }
+  }
+
+  async function flushPendingTrades() {
+    if (state.pendingTradePersist.length === 0) return;
+    const batch = state.pendingTradePersist.splice(0, state.pendingTradePersist.length);
+    if (state.tradePersistTimeoutId) {
+      clearTimeout(state.tradePersistTimeoutId);
+      state.tradePersistTimeoutId = null;
+    }
+    try {
+      await appendTrades(batch, MAX_REPLAY_TRADES);
+    } catch {
+      // Cache failures should not interrupt the live engine.
+    }
+  }
+
+  function startReplay() {
+    if (state.tradeHistory.length < REPLAY_MIN_EVENTS) {
+      emitReplayState();
+      return;
+    }
+
+    const latestTradeTs = state.tradeHistory.at(-1)?.timestamp || 0;
+    const earliestTradeTs = state.tradeHistory[0]?.timestamp || 0;
+    const desiredStart = Math.max(earliestTradeTs, latestTradeTs - REPLAY_WINDOW_MS);
+    const startMinuteOpen = frameOpenTime(desiredStart, "1m");
+
+    restartReplay(startMinuteOpen, 1);
+  }
+
+  function stopReplay() {
+    if (!state.replay.enabled) return;
+    state.replay = createReplayState();
+    emitReplayState();
+    emitFullSnapshot();
+  }
+
+  function stepReplay(delta) {
+    if (!state.replay.enabled || !delta) return;
+    const target = clampInt(state.replay.cursor + delta, 0, state.replay.trades.length);
+    if (target === state.replay.cursor) {
+      emitReplayState();
+      return;
+    }
+
+    if (target > state.replay.cursor) {
+      advanceReplayToCursor(target);
+    } else {
+      rebuildReplayToCursor(target);
+    }
+
+    emitReplayState();
+    emitFullSnapshot();
+  }
+
+  function restartReplay(startMinuteOpen, targetCursor) {
+    prepareReplayWindow(startMinuteOpen);
+    rebuildReplayToCursor(targetCursor);
+    emitReplayState();
+    emitFullSnapshot();
+  }
+
+  function prepareReplayWindow(startMinuteOpen) {
+    const replayFrameStart = frameOpenTime(startMinuteOpen, state.timeframe);
+    const baseMinuteBars = state.completedBars.filter((bar) => bar.candle_open_time < replayFrameStart);
+    const seededBars = state.completedBars.filter((bar) => (
+      bar.candle_open_time >= replayFrameStart && bar.candle_open_time < startMinuteOpen
+    ));
+    const trades = state.tradeHistory.filter((trade) => trade.timestamp >= startMinuteOpen);
+    const depthSource = state.depthHistory
+      .filter((snapshot) => snapshot.timestamp >= replayFrameStart)
+      .map(copyDepthSnapshot);
+
+    state.replay = {
+      enabled: trades.length >= REPLAY_MIN_EVENTS,
+      startMinuteOpen,
+      replayFrameStart,
+      baseAggregatedBars: aggregateBars(
+        baseMinuteBars,
+        state.timeframe,
+        state.tickMultiplier,
+        state.studyConfig,
+      ).slice(-MAX_HISTORY_BARS),
+      seededBars: copyBars(seededBars),
+      trades,
+      depthSource,
+      cursor: 0,
+      currentTime: startMinuteOpen,
+      completedBars: [],
+      currentCandle: null,
+      currentCvd: 0,
+      currentOI: 0,
+      prevBarOI: 0,
+      bestBid: 0,
+      bestBidSize: 0,
+      bestAsk: 0,
+      bestAskSize: 0,
+      depthCursor: 0,
+      depthHistory: [],
+      currentDepth: null,
+    };
+  }
+
+  function rebuildReplayToCursor(targetCursor) {
+    if (!state.replay.enabled) return;
+    resetReplayRuntime();
+    advanceReplayToCursor(targetCursor);
+  }
+
+  function resetReplayRuntime() {
+    const replay = state.replay;
+    replay.cursor = 0;
+    replay.currentTime = replay.startMinuteOpen;
+    replay.completedBars = copyBars(replay.seededBars);
+    replay.currentCandle = null;
+    replay.depthCursor = 0;
+    replay.depthHistory = [];
+    replay.currentDepth = null;
+
+    const seedBar = replay.completedBars.at(-1)
+      || replay.baseAggregatedBars.at(-1)
+      || null;
+
+    replay.currentCvd = Number(seedBar?.cvd) || 0;
+    replay.currentOI = Number(seedBar?.oi) || 0;
+    replay.prevBarOI = Number(seedBar?.oi) || 0;
+    replay.bestBid = Number(seedBar?.best_bid) || 0;
+    replay.bestBidSize = Number(seedBar?.best_bid_size) || 0;
+    replay.bestAsk = Number(seedBar?.best_ask) || 0;
+    replay.bestAskSize = Number(seedBar?.best_ask_size) || 0;
+
+    syncReplayDepthThrough(replay.startMinuteOpen);
+  }
+
+  function advanceReplayToCursor(targetCursor) {
+    const replay = state.replay;
+    if (!replay.enabled) return;
+
+    const safeTarget = clampInt(targetCursor, 0, replay.trades.length);
+    for (let index = replay.cursor; index < safeTarget; index += 1) {
+      applyReplayTrade(replay.trades[index]);
+    }
+    replay.cursor = safeTarget;
+  }
+
+  function applyReplayTrade(trade) {
+    if (!trade) return;
+
+    const replay = state.replay;
+    syncReplayDepthThrough(trade.timestamp);
+
+    const openTime = trade.timestamp - (trade.timestamp % 60_000);
+    if (!replay.currentCandle || openTime !== replay.currentCandle.openTime) {
+      rotateReplayCandle(openTime);
+    }
+
+    if (trade.oi > 0) {
+      replay.currentOI = trade.oi;
+    }
+    if (trade.best_bid > 0) {
+      replay.bestBid = trade.best_bid;
+      replay.bestBidSize = trade.best_bid_size;
+    }
+    if (trade.best_ask > 0) {
+      replay.bestAsk = trade.best_ask;
+      replay.bestAskSize = trade.best_ask_size;
+    }
+
+    addTradeToCurrentCandle(replay.currentCandle, trade.price, trade.volume, trade.side, trade.seq);
+    replay.currentCvd = round6(replay.currentCvd + (trade.side === "Buy" ? trade.volume : -trade.volume));
+    replay.currentTime = trade.timestamp;
+  }
+
+  function rotateReplayCandle(nextOpenTime) {
+    const replay = state.replay;
+    if (replay.currentCandle?.hasTick) {
+      const closedBar = buildReplayOneMinuteBar(replay.currentCandle, replay.currentOI - replay.prevBarOI);
+      replay.prevBarOI = replay.currentOI;
+      replay.completedBars.push(closedBar);
+      if (replay.completedBars.length > MAX_HISTORY_BARS) {
+        replay.completedBars = replay.completedBars.slice(-MAX_HISTORY_BARS);
+      }
+    } else if (replay.currentCandle) {
+      replay.prevBarOI = replay.currentOI;
+    }
+
+    replay.currentCandle = createLiveCandle(nextOpenTime);
+  }
+
+  function buildReplayOneMinuteBar(candle, oiDelta) {
+    const replay = state.replay;
+    const clusters = [...candle.buckets.entries()]
+      .map(([bucketIndex, bucket]) => ({
+        price: round6(bucketIndex * BASE_ROW_SIZE),
+        buyVol: round6(bucket.buyVol),
+        sellVol: round6(bucket.sellVol),
+        delta: round6(bucket.buyVol - bucket.sellVol),
+        totalVol: round6(bucket.buyVol + bucket.sellVol),
+        buyTrades: bucket.buyTrades,
+        sellTrades: bucket.sellTrades,
+        maxTradeBuy: round6(bucket.maxTradeBuy),
+        maxTradeSell: round6(bucket.maxTradeSell),
+      }))
+      .sort((a, b) => a.price - b.price);
+
+    const depthSnapshot = replay.currentDepth;
+    const rawBar = {
+      candle_open_time: candle.openTime,
+      open: round6(candle.open),
+      high: round6(candle.high),
+      low: round6(candle.low),
+      close: round6(candle.close),
+      row_size: BASE_ROW_SIZE,
+      clusters,
+      candle_delta: round6(candle.delta),
+      cvd: round6(replay.currentCvd),
+      buy_trades: candle.buyTrades,
+      sell_trades: candle.sellTrades,
+      total_volume: round6(candle.buyVol + candle.sellVol),
+      buy_volume: round6(candle.buyVol),
+      sell_volume: round6(candle.sellVol),
+      oi: round6(replay.currentOI),
+      oi_delta: round6(oiDelta),
+      best_bid: round6(replay.bestBid),
+      best_bid_size: round6(replay.bestBidSize),
+      best_ask: round6(replay.bestAsk),
+      best_ask_size: round6(replay.bestAskSize),
+      bids: depthSnapshot?.bids ? copyBookLevels(depthSnapshot.bids) : [],
+      asks: depthSnapshot?.asks ? copyBookLevels(depthSnapshot.asks) : [],
+      unfinished_low: false,
+      unfinished_high: false,
+      absorption_low: false,
+      absorption_high: false,
+      exhaustion_low: false,
+      exhaustion_high: false,
+      sweep_buy: false,
+      sweep_sell: false,
+      delta_divergence_bull: false,
+      delta_divergence_bear: false,
+      alerts: [],
+      orderflow_coverage: 1,
+      data_source: "replay_trade_footprint",
+    };
+
+    return normalizeStoredBar(
+      aggregateBars([rawBar], "1m", 1, DEFAULT_STUDY_CONFIG)[0] || rawBar,
+    );
+  }
+
+  function syncReplayDepthThrough(timestamp) {
+    const replay = state.replay;
+    while (replay.depthCursor < replay.depthSource.length) {
+      const snapshot = replay.depthSource[replay.depthCursor];
+      if (snapshot.timestamp > timestamp) {
+        break;
+      }
+      replay.currentDepth = copyDepthSnapshot(snapshot);
+      replay.bestBid = snapshot.best_bid || replay.bestBid;
+      replay.bestBidSize = snapshot.best_bid_size || replay.bestBidSize;
+      replay.bestAsk = snapshot.best_ask || replay.bestAsk;
+      replay.bestAskSize = snapshot.best_ask_size || replay.bestAskSize;
+      replay.depthHistory.push(copyDepthSnapshot(snapshot));
+      if (replay.depthHistory.length > MAX_DEPTH_HISTORY) {
+        replay.depthHistory = replay.depthHistory.slice(-MAX_DEPTH_HISTORY);
+      }
+      replay.depthCursor += 1;
+    }
+  }
+
+  function buildReplayAggregatedLiveCandle() {
+    const replay = state.replay;
+    if (!replay.currentCandle?.hasTick) return null;
+
+    const liveRaw = buildReplayOneMinuteBar(replay.currentCandle, replay.currentOI - replay.prevBarOI);
+    const liveFrameOpen = frameOpenTime(liveRaw.candle_open_time, state.timeframe);
+    const trailingBars = [];
+    for (let index = replay.completedBars.length - 1; index >= 0; index -= 1) {
+      const bar = replay.completedBars[index];
+      if (frameOpenTime(bar.candle_open_time, state.timeframe) !== liveFrameOpen) {
+        break;
+      }
+      trailingBars.unshift(bar);
+    }
+
+    const aggregated = aggregateBars(
+      [...trailingBars, liveRaw],
+      state.timeframe,
+      state.tickMultiplier,
+      state.studyConfig,
+    );
+    return aggregated.at(-1) || null;
+  }
+
   function emitStatus() {
     postMessage({
       type: "status",
@@ -533,7 +918,27 @@ function createEngine() {
     });
   }
 
+  function emitReplayState() {
+    const available = state.tradeHistory.length >= REPLAY_MIN_EVENTS;
+    postMessage({
+      type: "replay",
+      payload: {
+        available,
+        enabled: state.replay.enabled,
+        totalEvents: state.replay.enabled ? state.replay.trades.length : 0,
+        cursor: state.replay.enabled ? state.replay.cursor : 0,
+        startTime: state.replay.enabled ? state.replay.startMinuteOpen : null,
+        currentTime: state.replay.enabled ? state.replay.currentTime : null,
+      },
+    });
+  }
+
   function emitFullSnapshot() {
+    if (state.replay.enabled) {
+      emitReplaySnapshot();
+      return;
+    }
+
     const liveCandle = buildAggregatedLiveCandle();
     let history = copyBars(state.aggregatedHistory);
 
@@ -552,6 +957,31 @@ function createEngine() {
     });
   }
 
+  function emitReplaySnapshot() {
+    const replayHistory = aggregateBars(
+      state.replay.completedBars,
+      state.timeframe,
+      state.tickMultiplier,
+      state.studyConfig,
+    );
+    const liveCandle = buildReplayAggregatedLiveCandle();
+    let history = mergeHistoryBars(state.replay.baseAggregatedBars, replayHistory).slice(-MAX_HISTORY_BARS);
+
+    if (liveCandle && history.at(-1)?.candle_open_time === liveCandle.candle_open_time) {
+      history = history.slice(0, -1);
+    }
+
+    postMessage({
+      type: "snapshot",
+      payload: {
+        candles: history,
+        liveCandle,
+        depthHistory: state.replay.depthHistory.slice(-MAX_DEPTH_HISTORY),
+        status: state.status,
+      },
+    });
+  }
+
   function setStatus(nextStatus) {
     if (state.status === nextStatus) return;
     state.status = nextStatus;
@@ -561,13 +991,122 @@ function createEngine() {
   return {
     init,
     updateSettings,
+    startReplay,
+    stopReplay,
+    stepReplay,
     shutdown,
+  };
+}
+
+function createReplayState() {
+  return {
+    enabled: false,
+    startMinuteOpen: 0,
+    replayFrameStart: 0,
+    baseAggregatedBars: [],
+    seededBars: [],
+    trades: [],
+    depthSource: [],
+    cursor: 0,
+    currentTime: 0,
+    completedBars: [],
+    currentCandle: null,
+    currentCvd: 0,
+    currentOI: 0,
+    prevBarOI: 0,
+    bestBid: 0,
+    bestBidSize: 0,
+    bestAsk: 0,
+    bestAskSize: 0,
+    depthCursor: 0,
+    depthHistory: [],
+    currentDepth: null,
   };
 }
 
 function normalizeProxyBase(proxyBase) {
   if (!proxyBase) return "/api";
   return proxyBase.endsWith("/") ? proxyBase.slice(0, -1) : proxyBase;
+}
+
+function buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }) {
+  const paddedTime = String(timestamp || 0).padStart(16, "0");
+  const paddedSeq = String(seq || 0).padStart(12, "0");
+  if (tradeId) {
+    return `${paddedTime}:${paddedSeq}:${tradeId}`;
+  }
+  return `${paddedTime}:${paddedSeq}:${side}:${round6(price)}:${round6(volume)}`;
+}
+
+function copyBookLevels(levels) {
+  return (levels || []).map((level) => ({
+    price: Number(level?.price) || 0,
+    size: Number(level?.size) || 0,
+  }));
+}
+
+function copyDepthSnapshot(snapshot) {
+  return snapshot ? {
+    timestamp: Number(snapshot.timestamp) || 0,
+    row_size: Number(snapshot.row_size) || 0,
+    best_bid: Number(snapshot.best_bid) || 0,
+    best_bid_size: Number(snapshot.best_bid_size) || 0,
+    best_ask: Number(snapshot.best_ask) || 0,
+    best_ask_size: Number(snapshot.best_ask_size) || 0,
+    bids: copyBookLevels(snapshot.bids),
+    asks: copyBookLevels(snapshot.asks),
+  } : null;
+}
+
+function normalizeDepthSnapshots(items) {
+  return (items || [])
+    .map(copyDepthSnapshot)
+    .filter((snapshot) => snapshot?.timestamp);
+}
+
+function normalizeReplayTrade(item) {
+  const trade = {
+    event_id: typeof item?.event_id === "string" ? item.event_id : "",
+    timestamp: Number(item?.timestamp) || 0,
+    price: Number(item?.price) || 0,
+    volume: Number(item?.volume) || 0,
+    side: item?.side === "Sell" ? "Sell" : "Buy",
+    seq: Number(item?.seq) || 0,
+    trade_id: typeof item?.trade_id === "string" ? item.trade_id : "",
+    oi: Number(item?.oi) || 0,
+    best_bid: Number(item?.best_bid) || 0,
+    best_bid_size: Number(item?.best_bid_size) || 0,
+    best_ask: Number(item?.best_ask) || 0,
+    best_ask_size: Number(item?.best_ask_size) || 0,
+  };
+
+  if (!trade.event_id && trade.timestamp) {
+    trade.event_id = buildReplayEventId({
+      timestamp: trade.timestamp,
+      seq: trade.seq,
+      tradeId: trade.trade_id,
+      side: trade.side,
+      price: trade.price,
+      volume: trade.volume,
+    });
+  }
+
+  return trade;
+}
+
+function normalizeReplayTrades(items) {
+  return (items || [])
+    .map(normalizeReplayTrade)
+    .filter((trade) => trade.event_id && trade.timestamp && trade.price > 0 && trade.volume > 0)
+    .sort((a, b) => {
+      const timestampDelta = a.timestamp - b.timestamp;
+      if (timestampDelta !== 0) return timestampDelta;
+      return a.seq - b.seq;
+    });
+}
+
+function clampInt(value, minValue, maxValue) {
+  return Math.max(minValue, Math.min(maxValue, Number(value) || 0));
 }
 
 function createLiveCandle(openTime) {

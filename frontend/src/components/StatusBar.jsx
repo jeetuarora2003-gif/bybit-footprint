@@ -99,7 +99,11 @@ export default function StatusBar({
         {replay?.enabled && (
           <>
             <span className="stb-sep">|</span>
-            <span className="stb-info">Replay: {replay.playing ? "playing" : "paused"} {replayTime ? `@ ${replayTime}` : ""}</span>
+            <span className="stb-info">
+              Replay: {replay.playing ? "playing" : "paused"}
+              {replayTime ? ` @ ${replayTime}` : ""}
+              {Number.isFinite(replay.cursor) && Number.isFinite(replay.totalEvents) ? ` (${replay.cursor}/${replay.totalEvents})` : ""}
+            </span>
           </>
         )}
       </div>
@@ -121,7 +125,14 @@ export default function StatusBar({
           </>
         ) : (
           <>
-            <button className="stb-action" onClick={onStartReplay}>Replay</button>
+            <button
+              className="stb-action"
+              onClick={onStartReplay}
+              disabled={!replay?.available}
+              title={replay?.available ? "Replay recent raw market events" : "Replay unlocks after enough raw events are cached"}
+            >
+              Replay
+            </button>
             <span className="stb-sep">|</span>
           </>
         )}
