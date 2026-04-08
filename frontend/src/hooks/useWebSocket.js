@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const HOST = window.location.host;
-const PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
-const IS_LOCAL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-const BASE_WS = IS_LOCAL ? "ws://localhost:8080" : `${PROTOCOL}//${HOST}`;
-const BASE_HTTP = IS_LOCAL ? "http://localhost:8080" : "";
-const HISTORY_LIMIT = 5000;
+const DEFAULT_SYMBOL = "BTCUSDT";
+
+function resolveProxyBase() {
+  const configured = import.meta.env.VITE_PROXY_BASE_URL;
+  if (configured) {
+    return configured.endsWith("/") ? configured.slice(0, -1) : configured;
+  }
+  return "/api";
+}
 
 function normalizeBookLevels(levels) {
   return (levels || []).map((level) => ({
@@ -47,6 +50,7 @@ function normalizeCandle(candle) {
   const sellVolume = Number(candle.sell_volume) || 0;
   const orderflowCoverage = Number(candle.orderflow_coverage);
   const inferredCoverage = candle?.clusters?.length || buyTrades > 0 || sellTrades > 0 || buyVolume > 0 || sellVolume > 0 ? 1 : 0;
+
   return {
     ...candle,
     candle_open_time: Number(candle.candle_open_time) || 0,
@@ -100,161 +104,97 @@ function normalizeDepthSnapshot(snapshot) {
   };
 }
 
-function buildChartQuery(timeframe, tickSize) {
-  const params = new URLSearchParams({
-    timeframe,
-    tickSize,
-    limit: String(HISTORY_LIMIT),
-  });
-  return params.toString();
-}
-
 export default function useWebSocket(timeframe = "1m", tickSize = "1") {
   const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
   const [depthHistory, setDepthHistory] = useState([]);
   const [status, setStatus] = useState("disconnected");
 
-  const wsRef = useRef(null);
-  const reconnectRef = useRef(null);
-  const stoppedRef = useRef(false);
-  const candleMapRef = useRef(new Map());
-  const depthHistoryRef = useRef([]);
+  const workerRef = useRef(null);
 
-  const publishCandles = useCallback(() => {
-    const ordered = [...candleMapRef.current.values()]
-      .sort((a, b) => Number(a.candle_open_time) - Number(b.candle_open_time));
-    setCandles(ordered.slice(0, -1));
-    setLiveCandle(ordered.at(-1) ?? null);
-  }, []);
+  const applySnapshot = useCallback((payload) => {
+    const nextCandles = Array.isArray(payload?.candles)
+      ? payload.candles.map(normalizeCandle).filter((candle) => candle?.candle_open_time)
+      : [];
+    const nextLive = normalizeCandle(payload?.liveCandle);
+    const nextDepth = Array.isArray(payload?.depthHistory)
+      ? payload.depthHistory.map(normalizeDepthSnapshot).filter((snapshot) => snapshot.timestamp > 0)
+      : [];
 
-  const upsertCandles = useCallback((incoming) => {
-    const list = Array.isArray(incoming) ? incoming : [incoming];
-    for (const raw of list) {
-      const candle = normalizeCandle(raw);
-      if (!candle?.candle_open_time) continue;
-      candleMapRef.current.set(candle.candle_open_time, candle);
-    }
-
-    const keys = [...candleMapRef.current.keys()].sort((a, b) => a - b);
-    if (keys.length > HISTORY_LIMIT) {
-      for (const key of keys.slice(0, keys.length - HISTORY_LIMIT)) {
-        candleMapRef.current.delete(key);
-      }
-    }
-
-    publishCandles();
-  }, [publishCandles]);
-
-  const fetchHistory = useCallback(async (query) => {
-    try {
-      const res = await fetch(`${BASE_HTTP}/history?${query}`);
-      const hist = await res.json();
-      if (Array.isArray(hist)) {
-        upsertCandles(hist);
-      }
-    } catch (error) {
-      console.warn("[history] not available, starting from live:", error.message);
-    }
-  }, [upsertCandles]);
-
-  const fetchDepthHistory = useCallback(async () => {
-    try {
-      const res = await fetch(`${BASE_HTTP}/depth-history`);
-      const depth = await res.json();
-      if (Array.isArray(depth)) {
-        const normalized = depth
-          .map(normalizeDepthSnapshot)
-          .filter((snapshot) => snapshot.timestamp > 0);
-        depthHistoryRef.current = normalized.slice(-4000);
-        setDepthHistory(depthHistoryRef.current);
-      }
-    } catch (error) {
-      console.warn("[depth-history] not available:", error.message);
+    setCandles(nextCandles);
+    setLiveCandle(nextLive);
+    setDepthHistory(nextDepth);
+    if (payload?.status) {
+      setStatus(payload.status);
     }
   }, []);
 
-  const appendDepthSnapshots = useCallback((incoming) => {
-    const list = (Array.isArray(incoming) ? incoming : [incoming])
-      .map(normalizeDepthSnapshot)
-      .filter((snapshot) => snapshot.timestamp > 0);
-    if (list.length === 0) return;
+  const applyLiveUpdate = useCallback((payload) => {
+    const nextLive = normalizeCandle(payload);
+    if (!nextLive?.candle_open_time) return;
+    setLiveCandle(nextLive);
+  }, []);
 
-    const combined = [...depthHistoryRef.current];
-    for (const snapshot of list) {
+  const appendDepthSnapshot = useCallback((payload) => {
+    const nextSnapshot = normalizeDepthSnapshot(payload);
+    if (!nextSnapshot.timestamp) return;
+
+    setDepthHistory((current) => {
+      const combined = [...current];
       const last = combined.at(-1);
-      if (last?.timestamp === snapshot.timestamp) {
-        combined[combined.length - 1] = snapshot;
-      } else if (!last || snapshot.timestamp > last.timestamp) {
-        combined.push(snapshot);
+      if (last?.timestamp === nextSnapshot.timestamp) {
+        combined[combined.length - 1] = nextSnapshot;
+      } else if (!last || nextSnapshot.timestamp > last.timestamp) {
+        combined.push(nextSnapshot);
       }
-    }
-
-    depthHistoryRef.current = combined.slice(-4000);
-    setDepthHistory(depthHistoryRef.current);
+      return combined.slice(-4000);
+    });
   }, []);
 
   useEffect(() => {
-    stoppedRef.current = false;
+    const worker = new Worker(new URL("../workers/marketDataWorker.js", import.meta.url), {
+      type: "module",
+    });
+    workerRef.current = worker;
 
-    const query = buildChartQuery(timeframe, tickSize);
-
-    const connect = () => {
-      if (stoppedRef.current) return;
-      if (wsRef.current) wsRef.current.close();
-
-      setStatus("connecting");
-      fetchHistory(query);
-      fetchDepthHistory();
-
-      const ws = new WebSocket(`${BASE_WS}?${query}`);
-      wsRef.current = ws;
-
-      ws.onopen = () => setStatus("connected");
-
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          if (message?.type === "depth" && message?.payload) {
-            appendDepthSnapshots(message.payload);
-            return;
-          }
-          if (message?.type === "candle" && message?.payload) {
-            upsertCandles(message.payload);
-            return;
-          }
-          upsertCandles(message);
-        } catch {
-          // Ignore malformed frames from transient network/proxy issues.
-        }
-      };
-
-      ws.onerror = () => {};
-      ws.onclose = () => {
-        if (stoppedRef.current) return;
-        setStatus("disconnected");
-        reconnectRef.current = setTimeout(connect, 2000);
-      };
-    };
-
-    const startTimer = setTimeout(() => {
-      candleMapRef.current = new Map();
-      depthHistoryRef.current = [];
-      setCandles([]);
-      setLiveCandle(null);
-      setDepthHistory([]);
-      connect();
-    }, 0);
-
-    return () => {
-      stoppedRef.current = true;
-      clearTimeout(startTimer);
-      clearTimeout(reconnectRef.current);
-      if (wsRef.current) {
-        wsRef.current.close();
+    worker.onmessage = (event) => {
+      const { type, payload } = event.data || {};
+      if (type === "snapshot") {
+        applySnapshot(payload);
+      } else if (type === "live") {
+        applyLiveUpdate(payload);
+      } else if (type === "depth") {
+        appendDepthSnapshot(payload);
+      } else if (type === "status") {
+        setStatus(typeof payload === "string" ? payload : "disconnected");
       }
     };
-  }, [appendDepthSnapshots, fetchDepthHistory, fetchHistory, tickSize, timeframe, upsertCandles]);
+
+    worker.postMessage({
+      type: "init",
+      payload: {
+        symbol: DEFAULT_SYMBOL,
+        proxyBase: resolveProxyBase(),
+      },
+    });
+
+    return () => {
+      worker.postMessage({ type: "shutdown" });
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, [appendDepthSnapshot, applyLiveUpdate, applySnapshot]);
+
+  useEffect(() => {
+    if (!workerRef.current) return;
+    workerRef.current.postMessage({
+      type: "settings",
+      payload: {
+        timeframe,
+        tickSize,
+      },
+    });
+  }, [timeframe, tickSize]);
 
   return { candles, liveCandle, depthHistory, status };
 }

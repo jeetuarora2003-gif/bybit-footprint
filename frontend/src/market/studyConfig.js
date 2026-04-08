@@ -1,0 +1,16 @@
+export const DEFAULT_STUDY_CONFIG = Object.freeze({
+  imbalance_threshold: 2.5,
+  min_imbalance_volume: 1,
+  stacked_levels: 3,
+  value_area_percent: 70,
+  large_trade_threshold: 15,
+  bid_ask_ratio_threshold: 3,
+  absorption_volume_factor: 2.2,
+  absorption_ratio_threshold: 1.2,
+  exhaustion_volume_factor: 0.55,
+  sweep_range_ticks: 20,
+  sweep_delta_ratio: 0.24,
+  delta_divergence_ratio: 0.18,
+  open_interest_source: "official_bybit_open_interest",
+  cvd_source: "computed_from_official_trades",
+});

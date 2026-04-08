@@ -1,1 +1,6 @@
 backend/data/
+backend/*.exe
+backend/*.exe~
+frontend/dist/
+frontend/node_modules/
+cloudflare/.wrangler/

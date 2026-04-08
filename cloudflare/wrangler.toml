@@ -1,0 +1,6 @@
+name = "bybit-footprint-proxy"
+main = "worker.mjs"
+compatibility_date = "2026-04-09"
+
+[observability]
+enabled = true

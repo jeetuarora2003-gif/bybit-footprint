@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import useBackendConfig from "./hooks/useBackendConfig";
 import useWebSocket from "./hooks/useWebSocket";
 import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
@@ -28,13 +27,11 @@ export default function App() {
     index: null,
     speed: 1,
   });
-  const backendConfig = useBackendConfig();
 
   const activeFeatures = useMemo(() => new Set(activeFeatureArr), [activeFeatureArr]);
   const resolvedSettings = useMemo(() => ({
     ...settings,
-    vaPercent: backendConfig?.value_area_percent ?? settings.vaPercent,
-  }), [backendConfig, settings]);
+  }), [settings]);
 
   const updateSetting = (key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
