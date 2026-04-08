@@ -46,6 +46,32 @@ npm run dev
 
 The app can run without the proxy, but historical backfill will be missing until a proxy URL is configured.
 
+### Desktop App
+
+If you want a real double-click launcher instead of terminals:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
+```
+
+That generates:
+
+```text
+desktop-app/Bybit Footprint.exe
+```
+
+The build also drops a shortcut on your Windows desktop:
+
+```text
+Desktop/Bybit Footprint.lnk
+```
+
+Double-click either the `.exe` or the desktop shortcut and it will:
+
+- start a small local server
+- open your browser automatically
+- serve the app and `/api/history` locally
+
 ### Cloudflare Worker
 
 ```bash

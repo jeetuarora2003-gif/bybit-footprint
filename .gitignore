@@ -4,3 +4,4 @@ backend/*.exe~
 frontend/dist/
 frontend/node_modules/
 cloudflare/.wrangler/
+desktop-app/
