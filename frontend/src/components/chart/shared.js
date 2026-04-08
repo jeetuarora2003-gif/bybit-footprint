@@ -19,7 +19,7 @@ export const PROFILE_POC = "rgba(244,114,182,0.40)";
 export const AUCTION_COLOR = "#facc15";
 
 export const BASE_TICK_SIZE = 0.1;
-export const PRICE_AXIS_W = 75;
+export const PRICE_AXIS_W = 92;
 export const TIME_AXIS_H = 26;
 export const MIN_CANDLE_W = 6;
 export const MAX_CANDLE_W = 200;
@@ -113,20 +113,38 @@ export function getClusterFontSize(rowH, candleW, text, dataView) {
   return Math.min(maxFont, Math.max(minFont, Math.min(widthLimited, heightLimited)));
 }
 
-export function shouldRenderClusterText(dataView, rowH, candleW, clusterIndex, clusterCount) {
+export function recommendedCandleWidth(settings, modeFlags) {
+  const timeframe = settings?.timeframe ?? "1m";
+  const tickMultiplier = Math.max(1, Number.parseFloat(settings?.tickSize) || 1);
+  const tfMs = CHART_TF_MS[timeframe] ?? CHART_TF_MS["1m"];
+  const tfMinutes = tfMs / 60000;
+  const timeWeight = Math.log10(tfMinutes + 1);
+  const tickPenalty = Math.log10(tickMultiplier + 1) * 4.5;
+  const profileBoost = modeFlags?.minimalProfileMode ? 8 : 0;
+  return clamp(28 + timeWeight * 12 - tickPenalty + profileBoost, 18, 96);
+}
+
+export function shouldRenderClusterText(dataView, rowH, candleW, clusterIndex, clusterCount, textDensity = "balanced") {
   if (dataView === "none") return false;
   if (dataView === "bidAsk" || dataView === "imbalance") {
-    if (rowH < 9 || candleW < 38) return false;
+    if (rowH < 8 || candleW < 30) return false;
   } else if (rowH < 7 || candleW < 28) {
     return false;
   }
 
-  const stride = getClusterTextStride(rowH, candleW, dataView, clusterCount);
+  const stride = getClusterTextStride(rowH, candleW, dataView, clusterCount, textDensity);
   return clusterIndex % stride === 0;
 }
 
-function getClusterTextStride(rowH, candleW, dataView, clusterCount) {
+function getClusterTextStride(rowH, candleW, dataView, clusterCount, textDensity) {
   if (dataView === "bidAsk" || dataView === "imbalance") {
+    if (textDensity === "profile-tight") {
+      if (rowH < 9 || candleW < 42) return 5;
+      if (rowH < 11 || candleW < 52) return 4;
+      if (rowH < 14 || candleW < 62) return 3;
+      if (rowH < 18 || candleW < 76) return 2;
+      return 1;
+    }
     if (rowH < 12 || candleW < 52) return 3;
     if (rowH < 16 || candleW < 64) return 2;
   } else if (rowH < 10 || candleW < 42) {

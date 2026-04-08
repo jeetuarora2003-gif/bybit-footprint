@@ -1,4 +1,4 @@
-import { summarizeCandleImbalance } from "../../utils/orderflow";
+import { summarizeCandleImbalance, summarizeStudySignals } from "../../utils/orderflow";
 import {
   AUCTION_COLOR,
   BG,
@@ -175,6 +175,7 @@ export function drawCandle(
       settings.shortNumbers,
       clusterIndex,
       clusters.length,
+      modeFlags,
     );
 
     if (modeFlags.showImbalanceMarkers && !modeFlags.exoImbalanceProfile) {
@@ -211,16 +212,20 @@ export function drawCandle(
     drawCandleImbalanceBadge(ctx, candle, centerX, yHigh, yTop, candleW, bodyW, settings.shortNumbers);
   }
 
+  if (modeFlags.showStudySignals) {
+    drawStudySignals(ctx, candle, centerX, yHigh, yLow, candleW);
+  }
+
   if (modeFlags.showCandleMetaOverlay && (modeFlags.showTradeCount || modeFlags.showTradeSize || modeFlags.showCandleStats)) {
     drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, modeFlags, settings.shortNumbers);
   }
 }
 
-function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW, shortNumbers, clusterIndex, clusterCount) {
-  if (!shouldRenderClusterText(dataView, rowH, candleW, clusterIndex, clusterCount)) return;
+function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW, shortNumbers, clusterIndex, clusterCount, modeFlags) {
+  if (!shouldRenderClusterText(dataView, rowH, candleW, clusterIndex, clusterCount, modeFlags?.textDensity)) return;
 
-  const leftText = fmtFootprintValue(cluster.buyVol, { shortNumbers });
-  const rightText = fmtFootprintValue(cluster.sellVol, { shortNumbers });
+  const leftText = fmtFootprintValue(cluster.sellVol, { shortNumbers });
+  const rightText = fmtFootprintValue(cluster.buyVol, { shortNumbers });
   const primaryText = dataView === "volume"
     ? fmtFootprintValue(cluster.totalVol, { shortNumbers })
     : dataView === "delta"
@@ -269,9 +274,9 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW,
       y: yMid,
       rowTop,
       rowH,
-      side: "ask",
-      active: cluster.imbalance_buy,
-      stacked: cluster.stacked_buy,
+      side: "sell",
+      active: cluster.imbalance_sell,
+      stacked: cluster.stacked_sell,
       candleW,
       fontSize,
     });
@@ -284,9 +289,9 @@ function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW,
       y: yMid,
       rowTop,
       rowH,
-      side: "bid",
-      active: cluster.imbalance_sell,
-      stacked: cluster.stacked_sell,
+      side: "buy",
+      active: cluster.imbalance_buy,
+      stacked: cluster.stacked_buy,
       candleW,
       fontSize,
     });
@@ -308,7 +313,7 @@ function drawImbalanceTextCell(ctx, {
 }) {
   if (!text) return;
 
-  const color = side === "bid" ? (active ? "#bfd2ff" : GREEN) : RED;
+  const color = side === "buy" ? (active ? "#bfd2ff" : GREEN) : RED;
   const width = Math.min(candleW / 2 - 4, Math.max(14, text.length * (fontSize * 0.62)));
   const boxX = align === "right" ? x - width - 2 : x - 2;
 
@@ -322,36 +327,45 @@ function drawImbalanceTextCell(ctx, {
 }
 
 function drawBidAskProfileRow(ctx, cluster, centerX, rowTop, rowH, barMax, maxV, emphasizeImbalance) {
-  const askWidth = (cluster.buyVol / maxV) * barMax;
-  const bidWidth = (cluster.sellVol / maxV) * barMax;
+  const sellWidth = (cluster.sellVol / maxV) * barMax;
+  const buyWidth = (cluster.buyVol / maxV) * barMax;
   const innerHeight = Math.max(rowH - 0.5, 1);
-  const baseAskColor = emphasizeImbalance ? "rgba(255,136,136,0.78)" : RED_FILL;
-  const baseBidColor = emphasizeImbalance ? "rgba(102,255,120,0.78)" : BUY_FILL;
+  const baseSellColor = emphasizeImbalance ? "rgba(255,136,136,0.82)" : RED_FILL;
+  const baseBuyColor = emphasizeImbalance ? "rgba(102,255,120,0.82)" : BUY_FILL;
 
-  if (askWidth > 0) {
-    ctx.fillStyle = baseAskColor;
-    ctx.fillRect(centerX - askWidth, rowTop, askWidth, innerHeight);
+  if (sellWidth > 0) {
+    ctx.fillStyle = baseSellColor;
+    ctx.fillRect(centerX - sellWidth, rowTop, sellWidth, innerHeight);
   }
-  if (bidWidth > 0) {
-    ctx.fillStyle = baseBidColor;
-    ctx.fillRect(centerX, rowTop, bidWidth, innerHeight);
+  if (buyWidth > 0) {
+    ctx.fillStyle = baseBuyColor;
+    ctx.fillRect(centerX, rowTop, buyWidth, innerHeight);
+  }
+
+  if (cluster.large_trade_sell) {
+    ctx.fillStyle = "rgba(255,45,45,0.95)";
+    ctx.fillRect(centerX - Math.max(sellWidth, 6), rowTop, Math.max(2, sellWidth * 0.16), innerHeight);
+  }
+  if (cluster.large_trade_buy) {
+    ctx.fillStyle = "rgba(143,170,255,0.95)";
+    ctx.fillRect(centerX + Math.max(0, buyWidth - Math.max(2, buyWidth * 0.16)), rowTop, Math.max(2, buyWidth * 0.16), innerHeight);
   }
 
   if (!emphasizeImbalance) return;
 
   const yMid = rowTop + rowH / 2;
-  if (cluster.imbalance_buy) {
-    const lineWidth = Math.max(askWidth, barMax * 0.55);
-    ctx.strokeStyle = cluster.stacked_buy ? "rgba(255,45,45,0.98)" : "rgba(255,45,45,0.86)";
+  if (cluster.imbalance_sell) {
+    const lineWidth = Math.max(sellWidth, barMax * 0.55);
+    ctx.strokeStyle = cluster.stacked_sell ? "rgba(255,45,45,0.98)" : "rgba(255,45,45,0.86)";
     ctx.lineWidth = Math.max(1.2, rowH * 0.34);
     ctx.beginPath();
     ctx.moveTo(centerX - lineWidth, yMid);
     ctx.lineTo(centerX, yMid);
     ctx.stroke();
   }
-  if (cluster.imbalance_sell) {
-    const lineWidth = Math.max(bidWidth, barMax * 0.55);
-    ctx.strokeStyle = cluster.stacked_sell ? "rgba(143,170,255,0.98)" : "rgba(143,170,255,0.86)";
+  if (cluster.imbalance_buy) {
+    const lineWidth = Math.max(buyWidth, barMax * 0.55);
+    ctx.strokeStyle = cluster.stacked_buy ? "rgba(143,170,255,0.98)" : "rgba(143,170,255,0.86)";
     ctx.lineWidth = Math.max(1.2, rowH * 0.34);
     ctx.beginPath();
     ctx.moveTo(centerX, yMid);
@@ -371,12 +385,12 @@ function drawFootprintMidline(ctx, centerX, rowTop, rowH) {
 }
 
 function drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH) {
-  if (cluster.imbalance_buy) {
-    ctx.fillStyle = cluster.stacked_buy ? "rgba(239,83,80,0.95)" : "rgba(239,83,80,0.55)";
+  if (cluster.imbalance_sell) {
+    ctx.fillStyle = cluster.stacked_sell ? "rgba(239,83,80,0.95)" : "rgba(239,83,80,0.55)";
     ctx.fillRect(centerX - candleW / 2 + 1, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
-  if (cluster.imbalance_sell) {
-    ctx.fillStyle = cluster.stacked_sell ? "rgba(66,165,245,0.95)" : "rgba(66,165,245,0.55)";
+  if (cluster.imbalance_buy) {
+    ctx.fillStyle = cluster.stacked_buy ? "rgba(66,165,245,0.95)" : "rgba(66,165,245,0.55)";
     ctx.fillRect(centerX + candleW / 2 - 4, rowTop + 1, 3, Math.max(2, rowH - 2));
   }
 }
@@ -473,5 +487,40 @@ function drawCandleMeta(ctx, candle, centerX, yTop, yBottom, candleW, modeFlags,
     ctx.textBaseline = "top";
     ctx.fillStyle = "rgba(148,163,184,0.82)";
     ctx.fillText(fmtFootprintValue(avgTradeSize, { shortNumbers }), centerX, yBottom + 3);
+  }
+}
+
+function drawStudySignals(ctx, candle, centerX, yHigh, yLow, candleW) {
+  const tags = summarizeStudySignals(candle);
+  if (!tags.length) return;
+
+  const topY = Math.max(2, yHigh - 26);
+  const bottomY = yLow + 6;
+
+  if (candle.absorption_high || candle.absorption_low) {
+    ctx.fillStyle = "rgba(255,202,40,0.92)";
+    ctx.fillRect(centerX - candleW / 2 - 6, candle.absorption_high ? topY : bottomY, 4, 10);
+  }
+  if (candle.exhaustion_high || candle.exhaustion_low) {
+    ctx.fillStyle = "rgba(148,163,184,0.92)";
+    ctx.fillRect(centerX + candleW / 2 + 2, candle.exhaustion_high ? topY : bottomY, 4, 10);
+  }
+  if (candle.sweep_buy || candle.sweep_sell) {
+    ctx.strokeStyle = candle.sweep_buy ? GREEN : RED;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(centerX - candleW / 2 - 2, candle.sweep_buy ? bottomY + 6 : topY + 2);
+    ctx.lineTo(centerX + candleW / 2 + 2, candle.sweep_buy ? bottomY + 6 : topY + 2);
+    ctx.stroke();
+  }
+  if (candle.delta_divergence_bull || candle.delta_divergence_bear) {
+    ctx.fillStyle = candle.delta_divergence_bull ? BUY : RED;
+    ctx.beginPath();
+    const triY = candle.delta_divergence_bull ? bottomY + 12 : topY - 1;
+    ctx.moveTo(centerX, triY);
+    ctx.lineTo(centerX - 4, candle.delta_divergence_bull ? triY + 6 : triY - 6);
+    ctx.lineTo(centerX + 4, candle.delta_divergence_bull ? triY + 6 : triY - 6);
+    ctx.closePath();
+    ctx.fill();
   }
 }

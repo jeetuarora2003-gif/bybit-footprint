@@ -76,17 +76,26 @@ type TickerData struct {
 // ════════════════════════════════════════════════════════════════════
 
 type Cluster struct {
-	Price         float64 `json:"price"`
-	BuyVol        float64 `json:"buyVol"`
-	SellVol       float64 `json:"sellVol"`
-	Delta         float64 `json:"delta"`
-	TotalVol      float64 `json:"totalVol"`
-	BuyTrades     int     `json:"buyTrades"`
-	SellTrades    int     `json:"sellTrades"`
-	ImbalanceBuy  bool    `json:"imbalance_buy"`
-	ImbalanceSell bool    `json:"imbalance_sell"`
-	StackedBuy    bool    `json:"stacked_buy"`
-	StackedSell   bool    `json:"stacked_sell"`
+	Price          float64 `json:"price"`
+	BuyVol         float64 `json:"buyVol"`
+	SellVol        float64 `json:"sellVol"`
+	Delta          float64 `json:"delta"`
+	TotalVol       float64 `json:"totalVol"`
+	BuyTrades      int     `json:"buyTrades"`
+	SellTrades     int     `json:"sellTrades"`
+	MaxTradeBuy    float64 `json:"maxTradeBuy"`
+	MaxTradeSell   float64 `json:"maxTradeSell"`
+	BidAskRatio    float64 `json:"bidAskRatio"`
+	ImbalanceBuy   bool    `json:"imbalance_buy"`
+	ImbalanceSell  bool    `json:"imbalance_sell"`
+	StackedBuy     bool    `json:"stacked_buy"`
+	StackedSell    bool    `json:"stacked_sell"`
+	LargeTradeBuy  bool    `json:"large_trade_buy"`
+	LargeTradeSell bool    `json:"large_trade_sell"`
+	AbsorptionBuy  bool    `json:"absorption_buy"`
+	AbsorptionSell bool    `json:"absorption_sell"`
+	ExhaustionBuy  bool    `json:"exhaustion_buy"`
+	ExhaustionSell bool    `json:"exhaustion_sell"`
 }
 
 type BookLevel struct {
@@ -120,33 +129,42 @@ type DepthEnvelope struct {
 }
 
 type BroadcastMsg struct {
-	CandleOpenTime    int64       `json:"candle_open_time"`
-	Open              float64     `json:"open"`
-	High              float64     `json:"high"`
-	Low               float64     `json:"low"`
-	Close             float64     `json:"close"`
-	RowSize           float64     `json:"row_size"`
-	Clusters          []Cluster   `json:"clusters"`
-	CandleDelta       float64     `json:"candle_delta"`
-	CVD               float64     `json:"cvd"`
-	BuyTrades         int         `json:"buy_trades"`
-	SellTrades        int         `json:"sell_trades"`
-	TotalVolume       float64     `json:"total_volume"`
-	BuyVolume         float64     `json:"buy_volume"`
-	SellVolume        float64     `json:"sell_volume"`
-	OI                float64     `json:"oi"`
-	OIDelta           float64     `json:"oi_delta"`
-	BestBid           float64     `json:"best_bid"`
-	BestBidSize       float64     `json:"best_bid_size"`
-	BestAsk           float64     `json:"best_ask"`
-	BestAskSize       float64     `json:"best_ask_size"`
-	Bids              []BookLevel `json:"bids"`
-	Asks              []BookLevel `json:"asks"`
-	UnfinishedLow     bool        `json:"unfinished_low"`
-	UnfinishedHigh    bool        `json:"unfinished_high"`
-	RecentTrades      []TapeTrade `json:"recent_trades,omitempty"`
-	OrderflowCoverage float64     `json:"orderflow_coverage"`
-	DataSource        string      `json:"data_source,omitempty"`
+	CandleOpenTime      int64       `json:"candle_open_time"`
+	Open                float64     `json:"open"`
+	High                float64     `json:"high"`
+	Low                 float64     `json:"low"`
+	Close               float64     `json:"close"`
+	RowSize             float64     `json:"row_size"`
+	Clusters            []Cluster   `json:"clusters"`
+	CandleDelta         float64     `json:"candle_delta"`
+	CVD                 float64     `json:"cvd"`
+	BuyTrades           int         `json:"buy_trades"`
+	SellTrades          int         `json:"sell_trades"`
+	TotalVolume         float64     `json:"total_volume"`
+	BuyVolume           float64     `json:"buy_volume"`
+	SellVolume          float64     `json:"sell_volume"`
+	OI                  float64     `json:"oi"`
+	OIDelta             float64     `json:"oi_delta"`
+	BestBid             float64     `json:"best_bid"`
+	BestBidSize         float64     `json:"best_bid_size"`
+	BestAsk             float64     `json:"best_ask"`
+	BestAskSize         float64     `json:"best_ask_size"`
+	Bids                []BookLevel `json:"bids"`
+	Asks                []BookLevel `json:"asks"`
+	UnfinishedLow       bool        `json:"unfinished_low"`
+	UnfinishedHigh      bool        `json:"unfinished_high"`
+	AbsorptionLow       bool        `json:"absorption_low"`
+	AbsorptionHigh      bool        `json:"absorption_high"`
+	ExhaustionLow       bool        `json:"exhaustion_low"`
+	ExhaustionHigh      bool        `json:"exhaustion_high"`
+	SweepBuy            bool        `json:"sweep_buy"`
+	SweepSell           bool        `json:"sweep_sell"`
+	DeltaDivergenceBull bool        `json:"delta_divergence_bull"`
+	DeltaDivergenceBear bool        `json:"delta_divergence_bear"`
+	RecentTrades        []TapeTrade `json:"recent_trades,omitempty"`
+	Alerts              []string    `json:"alerts,omitempty"`
+	OrderflowCoverage   float64     `json:"orderflow_coverage"`
+	DataSource          string      `json:"data_source,omitempty"`
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -162,10 +180,12 @@ const maxRecentTrades = 5000
 const maxRecentDepthSnapshots = 24000
 
 type bucketAccum struct {
-	buyVol     float64
-	sellVol    float64
-	buyTrades  int
-	sellTrades int
+	buyVol       float64
+	sellVol      float64
+	buyTrades    int
+	sellTrades   int
+	maxBuyTrade  float64
+	maxSellTrade float64
 }
 
 type Candle struct {
@@ -214,72 +234,131 @@ func (c *Candle) addTrade(price, vol float64, side string, seq int64) {
 	if side == "Buy" {
 		b.buyVol += vol
 		b.buyTrades++
+		if vol > b.maxBuyTrade {
+			b.maxBuyTrade = vol
+		}
 		c.delta += vol
 		c.buyVol += vol
 		c.buyTrades++
 	} else if side == "Sell" {
 		b.sellVol += vol
 		b.sellTrades++
+		if vol > b.maxSellTrade {
+			b.maxSellTrade = vol
+		}
 		c.delta -= vol
 		c.sellVol += vol
 		c.sellTrades++
 	}
 }
 
-func (c *Candle) footprint() ([]Cluster, bool, bool) {
+func (c *Candle) footprint() ([]Cluster, clusterSignalSummary) {
 	clusters := make([]Cluster, 0, len(c.buckets))
 	for idx, b := range c.buckets {
 		clusters = append(clusters, Cluster{
-			Price:      float64(idx) * rowSize,
-			BuyVol:     round6(b.buyVol),
-			SellVol:    round6(b.sellVol),
-			Delta:      round6(b.buyVol - b.sellVol),
-			TotalVol:   round6(b.buyVol + b.sellVol),
-			BuyTrades:  b.buyTrades,
-			SellTrades: b.sellTrades,
+			Price:        float64(idx) * rowSize,
+			BuyVol:       round6(b.buyVol),
+			SellVol:      round6(b.sellVol),
+			Delta:        round6(b.buyVol - b.sellVol),
+			TotalVol:     round6(b.buyVol + b.sellVol),
+			BuyTrades:    b.buyTrades,
+			SellTrades:   b.sellTrades,
+			MaxTradeBuy:  round6(b.maxBuyTrade),
+			MaxTradeSell: round6(b.maxSellTrade),
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Price < clusters[j].Price })
-	unfinishedLow, unfinishedHigh := annotateClusterSignals(clusters)
-	return clusters, unfinishedLow, unfinishedHigh
+	summary := annotateClusterSignals(clusters)
+	return clusters, summary
 }
 
-func annotateClusterSignals(clusters []Cluster) (bool, bool) {
+type clusterSignalSummary struct {
+	UnfinishedLow   bool
+	UnfinishedHigh  bool
+	AbsorptionLow   bool
+	AbsorptionHigh  bool
+	ExhaustionLow   bool
+	ExhaustionHigh  bool
+	ImbalanceCount  int
+	StackedCount    int
+	LargeTradeCount int
+}
+
+func annotateClusterSignals(clusters []Cluster) clusterSignalSummary {
 	if len(clusters) == 0 {
-		return false, false
+		return clusterSignalSummary{}
 	}
 
 	cfg := currentStudyConfig()
 	bullish := make([]bool, len(clusters))
 	bearish := make([]bool, len(clusters))
+	summary := clusterSignalSummary{}
+	avgTotalVol := 0.0
+	for _, cluster := range clusters {
+		avgTotalVol += cluster.TotalVol
+	}
+	avgTotalVol /= math.Max(1, float64(len(clusters)))
 
 	for i := range clusters {
+		cluster := &clusters[i]
+		cluster.BidAskRatio = round6((cluster.BuyVol + 1e-9) / (cluster.SellVol + 1e-9))
+		cluster.LargeTradeBuy = cluster.MaxTradeBuy >= cfg.LargeTradeThreshold
+		cluster.LargeTradeSell = cluster.MaxTradeSell >= cfg.LargeTradeThreshold
+		if cluster.LargeTradeBuy || cluster.LargeTradeSell {
+			summary.LargeTradeCount += 1
+		}
 		if i > 0 {
 			below := clusters[i-1]
-			if below.BuyVol > 0 && clusters[i].SellVol >= below.BuyVol*cfg.ImbalanceThreshold && clusters[i].SellVol >= cfg.MinImbalanceVolume {
+			if below.BuyVol > 0 && cluster.SellVol >= below.BuyVol*cfg.ImbalanceThreshold && cluster.SellVol >= cfg.MinImbalanceVolume {
 				bearish[i] = true
-				clusters[i].ImbalanceSell = true
+				cluster.ImbalanceSell = true
+				summary.ImbalanceCount += 1
 			}
 		}
 		if i+1 < len(clusters) {
 			above := clusters[i+1]
-			if above.SellVol > 0 && clusters[i].BuyVol >= above.SellVol*cfg.ImbalanceThreshold && clusters[i].BuyVol >= cfg.MinImbalanceVolume {
+			if above.SellVol > 0 && cluster.BuyVol >= above.SellVol*cfg.ImbalanceThreshold && cluster.BuyVol >= cfg.MinImbalanceVolume {
 				bullish[i] = true
-				clusters[i].ImbalanceBuy = true
+				cluster.ImbalanceBuy = true
+				summary.ImbalanceCount += 1
 			}
 		}
 	}
 
-	markStackedSide(clusters, bullish, true, cfg.StackedLevels)
-	markStackedSide(clusters, bearish, false, cfg.StackedLevels)
+	summary.StackedCount += markStackedSide(clusters, bullish, true, cfg.StackedLevels)
+	summary.StackedCount += markStackedSide(clusters, bearish, false, cfg.StackedLevels)
 
-	unfinishedLow := clusters[0].BuyVol > 0 && clusters[0].SellVol > 0
-	unfinishedHigh := clusters[len(clusters)-1].BuyVol > 0 && clusters[len(clusters)-1].SellVol > 0
-	return unfinishedLow, unfinishedHigh
+	low := &clusters[0]
+	high := &clusters[len(clusters)-1]
+	summary.UnfinishedLow = low.BuyVol > 0 && low.SellVol > 0
+	summary.UnfinishedHigh = high.BuyVol > 0 && high.SellVol > 0
+
+	highVolumeThreshold := avgTotalVol * cfg.AbsorptionVolumeFactor
+	lowVolumeThreshold := avgTotalVol * cfg.ExhaustionVolumeFactor
+
+	if low.TotalVol >= highVolumeThreshold && low.BuyVol > 0 && low.SellVol > 0 && low.BuyVol >= low.SellVol*cfg.AbsorptionRatioThreshold {
+		low.AbsorptionBuy = true
+		summary.AbsorptionLow = true
+	}
+	if high.TotalVol >= highVolumeThreshold && high.BuyVol > 0 && high.SellVol > 0 && high.SellVol >= high.BuyVol*cfg.AbsorptionRatioThreshold {
+		high.AbsorptionSell = true
+		summary.AbsorptionHigh = true
+	}
+	if low.TotalVol > 0 && low.TotalVol <= lowVolumeThreshold && low.SellVol >= low.BuyVol*cfg.BidAskRatioThreshold {
+		low.ExhaustionSell = true
+		summary.ExhaustionLow = true
+	}
+	if high.TotalVol > 0 && high.TotalVol <= lowVolumeThreshold && high.BuyVol >= high.SellVol*cfg.BidAskRatioThreshold {
+		high.ExhaustionBuy = true
+		summary.ExhaustionHigh = true
+	}
+
+	return summary
 }
 
-func markStackedSide(clusters []Cluster, flags []bool, buySide bool, required int) {
+func markStackedSide(clusters []Cluster, flags []bool, buySide bool, required int) int {
 	streak := make([]int, 0, len(flags))
+	marked := 0
 	flush := func() {
 		if len(streak) < required {
 			streak = streak[:0]
@@ -291,6 +370,7 @@ func markStackedSide(clusters []Cluster, flags []bool, buySide bool, required in
 			} else {
 				clusters[idx].StackedSell = true
 			}
+			marked += 1
 		}
 		streak = streak[:0]
 	}
@@ -303,6 +383,74 @@ func markStackedSide(clusters []Cluster, flags []bool, buySide bool, required in
 		flush()
 	}
 	flush()
+	return marked
+}
+
+func buildCandleAlerts(msg *BroadcastMsg, summary clusterSignalSummary) []string {
+	if msg == nil || msg.OrderflowCoverage <= 0 {
+		return nil
+	}
+
+	cfg := currentStudyConfig()
+	alerts := make([]string, 0, 8)
+	if summary.ImbalanceCount > 0 {
+		if summary.StackedCount > 0 {
+			alerts = append(alerts, "STACKED IMB")
+		} else {
+			alerts = append(alerts, "IMB")
+		}
+	}
+	if summary.AbsorptionLow || summary.AbsorptionHigh {
+		alerts = append(alerts, "ABS")
+	}
+	if summary.ExhaustionLow || summary.ExhaustionHigh {
+		alerts = append(alerts, "EXH")
+	}
+	if summary.LargeTradeCount > 0 {
+		alerts = append(alerts, "LARGE")
+	}
+
+	rangeTicks := 0.0
+	if msg.RowSize > 0 {
+		rangeTicks = (msg.High - msg.Low) / msg.RowSize
+	}
+	volumeDenominator := math.Max(msg.TotalVolume, 1e-9)
+	deltaRatio := math.Abs(msg.CandleDelta) / volumeDenominator
+	if rangeTicks >= cfg.SweepRangeTicks && deltaRatio >= cfg.SweepDeltaRatio {
+		if msg.Close >= msg.Open && msg.CandleDelta > 0 {
+			msg.SweepBuy = true
+			alerts = append(alerts, "SWEEP UP")
+		} else if msg.Close <= msg.Open && msg.CandleDelta < 0 {
+			msg.SweepSell = true
+			alerts = append(alerts, "SWEEP DN")
+		}
+	}
+
+	if msg.TotalVolume > 0 {
+		if msg.Close > msg.Open && msg.CandleDelta < 0 && math.Abs(msg.CandleDelta)/msg.TotalVolume >= cfg.DeltaDivergenceRatio {
+			msg.DeltaDivergenceBear = true
+			alerts = append(alerts, "DIV BEAR")
+		}
+		if msg.Close < msg.Open && msg.CandleDelta > 0 && math.Abs(msg.CandleDelta)/msg.TotalVolume >= cfg.DeltaDivergenceRatio {
+			msg.DeltaDivergenceBull = true
+			alerts = append(alerts, "DIV BULL")
+		}
+	}
+
+	return alerts
+}
+
+func applyStudySignals(msg *BroadcastMsg, summary clusterSignalSummary) {
+	if msg == nil {
+		return
+	}
+	msg.UnfinishedLow = summary.UnfinishedLow
+	msg.UnfinishedHigh = summary.UnfinishedHigh
+	msg.AbsorptionLow = summary.AbsorptionLow
+	msg.AbsorptionHigh = summary.AbsorptionHigh
+	msg.ExhaustionLow = summary.ExhaustionLow
+	msg.ExhaustionHigh = summary.ExhaustionHigh
+	msg.Alerts = buildCandleAlerts(msg, summary)
 }
 
 func copyTapeTrades(src []TapeTrade) []TapeTrade {
@@ -731,7 +879,7 @@ func main() {
 		if candle == nil || openT != candle.openTime {
 			// FIX #1 + #6: Snapshot the closing bar (with full clusters + closed OI delta) into completedBars
 			if candle != nil && candle.hasTick {
-				clusters, unfinishedLow, unfinishedHigh := candle.footprint()
+				clusters, summary := candle.footprint()
 				closedOIDelta := oi.barClose()
 				bidP, bidS, askP, askS := ob.bestBidAsk()
 				bids, asks := ob.topLevels(15)
@@ -758,11 +906,10 @@ func main() {
 					BestAskSize:       askS,
 					Bids:              bids,
 					Asks:              asks,
-					UnfinishedLow:     unfinishedLow,
-					UnfinishedHigh:    unfinishedHigh,
 					OrderflowCoverage: 1,
 					DataSource:        "live_trade_footprint",
 				}
+				applyStudySignals(&snapshot, summary)
 				completedBars = append(completedBars, snapshot)
 				// Cap history to last maxHistory bars
 				if len(completedBars) > maxHistory {
@@ -870,7 +1017,7 @@ func main() {
 
 			bidP, bidS, askP, askS := ob.bestBidAsk()
 			bids, asks := ob.topLevels(15)
-			clusters, unfinishedLow, unfinishedHigh := candle.footprint()
+			clusters, summary := candle.footprint()
 			tape := copyTapeTrades(recentTrades)
 			depthSnapshot := DepthSnapshot{
 				Timestamp:   time.Now().UnixMilli(),
@@ -915,12 +1062,11 @@ func main() {
 				BestAskSize:       askS,
 				Bids:              bids,
 				Asks:              asks,
-				UnfinishedLow:     unfinishedLow,
-				UnfinishedHigh:    unfinishedHigh,
 				RecentTrades:      tape,
 				OrderflowCoverage: 1,
 				DataSource:        "live_trade_footprint",
 			}
+			applyStudySignals(&msg, summary)
 			historySnapshot := copyBroadcastBars(completedBars)
 			mu.Unlock()
 
@@ -1061,34 +1207,35 @@ func main() {
 		if candle != nil && candle.hasTick {
 			bidP, bidS, askP, askS := ob.bestBidAsk()
 			bids, asks := ob.topLevels(15)
-			clusters, unfinishedLow, unfinishedHigh := candle.footprint()
+			clusters, summary := candle.footprint()
 			liveSnapshot = BroadcastMsg{
-				CandleOpenTime: candle.openTime,
-				Open:           candle.open,
-				High:           candle.high,
-				Low:            candle.low,
-				Close:          candle.close,
-				RowSize:        rowSize,
-				Clusters:       clusters,
-				CandleDelta:    round6(candle.delta),
-				CVD:            round6(cvd),
-				BuyTrades:      candle.buyTrades,
-				SellTrades:     candle.sellTrades,
-				TotalVolume:    round6(candle.buyVol + candle.sellVol),
-				BuyVolume:      round6(candle.buyVol),
-				SellVolume:     round6(candle.sellVol),
-				OI:             oi.get(),
-				OIDelta:        oi.delta(),
-				BestBid:        bidP,
-				BestBidSize:    bidS,
-				BestAsk:        askP,
-				BestAskSize:    askS,
-				Bids:           bids,
-				Asks:           asks,
-				UnfinishedLow:  unfinishedLow,
-				UnfinishedHigh: unfinishedHigh,
-				RecentTrades:   copyTapeTrades(recentTrades),
+				CandleOpenTime:    candle.openTime,
+				Open:              candle.open,
+				High:              candle.high,
+				Low:               candle.low,
+				Close:             candle.close,
+				RowSize:           rowSize,
+				Clusters:          clusters,
+				CandleDelta:       round6(candle.delta),
+				CVD:               round6(cvd),
+				BuyTrades:         candle.buyTrades,
+				SellTrades:        candle.sellTrades,
+				TotalVolume:       round6(candle.buyVol + candle.sellVol),
+				BuyVolume:         round6(candle.buyVol),
+				SellVolume:        round6(candle.sellVol),
+				OI:                oi.get(),
+				OIDelta:           oi.delta(),
+				BestBid:           bidP,
+				BestBidSize:       bidS,
+				BestAsk:           askP,
+				BestAskSize:       askS,
+				Bids:              bids,
+				Asks:              asks,
+				RecentTrades:      copyTapeTrades(recentTrades),
+				OrderflowCoverage: 1,
+				DataSource:        "live_trade_footprint",
 			}
+			applyStudySignals(&liveSnapshot, summary)
 		}
 		mu.Unlock()
 

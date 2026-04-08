@@ -9,8 +9,9 @@ import {
   drawGrid,
   drawHoveredCandleHighlight,
   drawLiquidityHeatmap,
+  drawProfileStudy,
   drawPriceAxis,
-  drawSessionProfile,
+  selectProfileSource,
   drawTimeAxis,
   drawVWAP,
 } from "./chart/overlayLayer";
@@ -25,6 +26,7 @@ import {
   clearHoverState,
   getRowSize,
   niceStep,
+  recommendedCandleWidth,
   updateHoverState,
   zoomPriceRange,
 } from "./chart/shared";
@@ -61,6 +63,17 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
       state.velocityX = 0;
     }
   }, [viewCommand]);
+
+  /* eslint-disable react-hooks/immutability */
+  useEffect(() => {
+    const state = stateRef.current;
+    const nextModeFlags = deriveModeFlags(settings, activeFeatures);
+    if (state.dragging || state.isDraggingY) return;
+    if (state.autoScroll) {
+      state.candleW = recommendedCandleWidth(settings, nextModeFlags);
+    }
+  }, [activeFeatures, settings]);
+  /* eslint-enable react-hooks/immutability */
 
   const stateRef = useRef({
     offsetX: 0,
@@ -451,8 +464,9 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
     }
   }
 
-  if (modeFlags.showSessionProfile) {
-    drawSessionProfile(ctx, visible, chartH, p2y, rowSize);
+  if (modeFlags.showProfileStudy) {
+    const profileSource = selectProfileSource(candles, visible, modeFlags.profileStudy);
+    drawProfileStudy(ctx, profileSource, chartH, p2y, rowSize);
   }
 
   for (let vi = 0; vi < visible.length; vi += 1) {
@@ -460,7 +474,7 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
       ctx,
       visible[vi],
       i2x(startIdx + vi),
-      Math.max(state.candleW * 0.6, 2),
+      Math.max(state.candleW * (0.6 * (modeFlags.barWidthScale ?? 1)), 2),
       p2y,
       chartH,
       state.candleW,
@@ -476,13 +490,13 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
     drawVWAP(ctx, visible, startIdx, p2y, i2x);
   }
 
-  drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, niceStep(priceRange), p2y, visible);
+  drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, niceStep(priceRange), p2y, visible, modeFlags);
 
   const lastVisible = visible.at(-1);
   if (modeFlags.showDOM && lastVisible?.bids?.length) {
     drawDOM(ctx, lastVisible, chartW, chartH, p2y, rowSize);
   }
 
-  drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x, PRICE_AXIS_W);
+  drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x, PRICE_AXIS_W, modeFlags);
   drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, PRICE_AXIS_W);
 }

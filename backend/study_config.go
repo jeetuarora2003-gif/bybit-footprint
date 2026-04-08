@@ -9,12 +9,20 @@ import (
 )
 
 type StudyConfig struct {
-	ImbalanceThreshold float64 `json:"imbalance_threshold"`
-	MinImbalanceVolume float64 `json:"min_imbalance_volume"`
-	StackedLevels      int     `json:"stacked_levels"`
-	ValueAreaPercent   float64 `json:"value_area_percent"`
-	OpenInterestSource string  `json:"open_interest_source"`
-	CVDSource          string  `json:"cvd_source"`
+	ImbalanceThreshold       float64 `json:"imbalance_threshold"`
+	MinImbalanceVolume       float64 `json:"min_imbalance_volume"`
+	StackedLevels            int     `json:"stacked_levels"`
+	ValueAreaPercent         float64 `json:"value_area_percent"`
+	LargeTradeThreshold      float64 `json:"large_trade_threshold"`
+	BidAskRatioThreshold     float64 `json:"bid_ask_ratio_threshold"`
+	AbsorptionVolumeFactor   float64 `json:"absorption_volume_factor"`
+	AbsorptionRatioThreshold float64 `json:"absorption_ratio_threshold"`
+	ExhaustionVolumeFactor   float64 `json:"exhaustion_volume_factor"`
+	SweepRangeTicks          float64 `json:"sweep_range_ticks"`
+	SweepDeltaRatio          float64 `json:"sweep_delta_ratio"`
+	DeltaDivergenceRatio     float64 `json:"delta_divergence_ratio"`
+	OpenInterestSource       string  `json:"open_interest_source"`
+	CVDSource                string  `json:"cvd_source"`
 }
 
 type studyConfigStore struct {
@@ -27,12 +35,20 @@ var runtimeStudyConfig *studyConfigStore
 
 func defaultStudyConfig() StudyConfig {
 	return StudyConfig{
-		ImbalanceThreshold: 2.5,
-		MinImbalanceVolume: 1,
-		StackedLevels:      3,
-		ValueAreaPercent:   70,
-		OpenInterestSource: "official_bybit_open_interest",
-		CVDSource:          "computed_from_official_trades",
+		ImbalanceThreshold:       2.5,
+		MinImbalanceVolume:       1,
+		StackedLevels:            3,
+		ValueAreaPercent:         70,
+		LargeTradeThreshold:      15,
+		BidAskRatioThreshold:     3,
+		AbsorptionVolumeFactor:   2.2,
+		AbsorptionRatioThreshold: 1.2,
+		ExhaustionVolumeFactor:   0.55,
+		SweepRangeTicks:          20,
+		SweepDeltaRatio:          0.24,
+		DeltaDivergenceRatio:     0.18,
+		OpenInterestSource:       "official_bybit_open_interest",
+		CVDSource:                "computed_from_official_trades",
 	}
 }
 
@@ -106,6 +122,30 @@ func normalizeStudyConfig(value StudyConfig) StudyConfig {
 	}
 	if value.ValueAreaPercent <= 0 || value.ValueAreaPercent >= 100 {
 		value.ValueAreaPercent = defaults.ValueAreaPercent
+	}
+	if value.LargeTradeThreshold <= 0 {
+		value.LargeTradeThreshold = defaults.LargeTradeThreshold
+	}
+	if value.BidAskRatioThreshold < 1 {
+		value.BidAskRatioThreshold = defaults.BidAskRatioThreshold
+	}
+	if value.AbsorptionVolumeFactor < 1 {
+		value.AbsorptionVolumeFactor = defaults.AbsorptionVolumeFactor
+	}
+	if value.AbsorptionRatioThreshold < 1 {
+		value.AbsorptionRatioThreshold = defaults.AbsorptionRatioThreshold
+	}
+	if value.ExhaustionVolumeFactor <= 0 || value.ExhaustionVolumeFactor >= 1 {
+		value.ExhaustionVolumeFactor = defaults.ExhaustionVolumeFactor
+	}
+	if value.SweepRangeTicks < 2 {
+		value.SweepRangeTicks = defaults.SweepRangeTicks
+	}
+	if value.SweepDeltaRatio <= 0 || value.SweepDeltaRatio >= 1 {
+		value.SweepDeltaRatio = defaults.SweepDeltaRatio
+	}
+	if value.DeltaDivergenceRatio <= 0 || value.DeltaDivergenceRatio >= 1 {
+		value.DeltaDivergenceRatio = defaults.DeltaDivergenceRatio
 	}
 	if value.OpenInterestSource == "" {
 		value.OpenInterestSource = defaults.OpenInterestSource

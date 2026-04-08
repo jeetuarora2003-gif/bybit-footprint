@@ -99,16 +99,18 @@ func bucketPriceForSize(price, targetRowSize float64) float64 {
 	return round6(math.Floor((price+math.SmallestNonzeroFloat64)/targetRowSize) * targetRowSize)
 }
 
-func normalizeAggregatedClusters(clusters []Cluster, targetRowSize float64) ([]Cluster, bool, bool) {
+func normalizeAggregatedClusters(clusters []Cluster, targetRowSize float64) ([]Cluster, clusterSignalSummary) {
 	if len(clusters) == 0 {
-		return nil, false, false
+		return nil, clusterSignalSummary{}
 	}
 
 	type clusterAccum struct {
-		BuyVol     float64
-		SellVol    float64
-		BuyTrades  int
-		SellTrades int
+		BuyVol       float64
+		SellVol      float64
+		BuyTrades    int
+		SellTrades   int
+		MaxTradeBuy  float64
+		MaxTradeSell float64
 	}
 
 	buckets := make(map[float64]*clusterAccum)
@@ -123,23 +125,27 @@ func normalizeAggregatedClusters(clusters []Cluster, targetRowSize float64) ([]C
 		current.SellVol += cluster.SellVol
 		current.BuyTrades += cluster.BuyTrades
 		current.SellTrades += cluster.SellTrades
+		current.MaxTradeBuy = math.Max(current.MaxTradeBuy, cluster.MaxTradeBuy)
+		current.MaxTradeSell = math.Max(current.MaxTradeSell, cluster.MaxTradeSell)
 	}
 
 	normalized := make([]Cluster, 0, len(buckets))
 	for price, item := range buckets {
 		normalized = append(normalized, Cluster{
-			Price:      round6(price),
-			BuyVol:     round6(item.BuyVol),
-			SellVol:    round6(item.SellVol),
-			Delta:      round6(item.BuyVol - item.SellVol),
-			TotalVol:   round6(item.BuyVol + item.SellVol),
-			BuyTrades:  item.BuyTrades,
-			SellTrades: item.SellTrades,
+			Price:        round6(price),
+			BuyVol:       round6(item.BuyVol),
+			SellVol:      round6(item.SellVol),
+			Delta:        round6(item.BuyVol - item.SellVol),
+			TotalVol:     round6(item.BuyVol + item.SellVol),
+			BuyTrades:    item.BuyTrades,
+			SellTrades:   item.SellTrades,
+			MaxTradeBuy:  round6(item.MaxTradeBuy),
+			MaxTradeSell: round6(item.MaxTradeSell),
 		})
 	}
 	sort.Slice(normalized, func(i, j int) bool { return normalized[i].Price < normalized[j].Price })
-	unfinishedLow, unfinishedHigh := annotateClusterSignals(normalized)
-	return normalized, unfinishedLow, unfinishedHigh
+	summary := annotateClusterSignals(normalized)
+	return normalized, summary
 }
 
 func aggregateBroadcastBars(source []BroadcastMsg, timeframe string, tickMultiplier float64) []BroadcastMsg {
@@ -208,16 +214,15 @@ func aggregateBroadcastBars(source []BroadcastMsg, timeframe string, tickMultipl
 	}
 
 	for index := range frames {
-		clusters, unfinishedLow, unfinishedHigh := normalizeAggregatedClusters(frames[index].Clusters, targetRowSize)
+		clusters, summary := normalizeAggregatedClusters(frames[index].Clusters, targetRowSize)
 		frames[index].Clusters = clusters
-		frames[index].UnfinishedLow = unfinishedLow
-		frames[index].UnfinishedHigh = unfinishedHigh
 		if frameCounts[index] > 0 {
 			frames[index].OrderflowCoverage = round6(frames[index].OrderflowCoverage / float64(frameCounts[index]))
 		}
 		if frames[index].DataSource == "" {
 			frames[index].DataSource = "mixed"
 		}
+		applyStudySignals(&frames[index], summary)
 	}
 
 	return frames
@@ -243,33 +248,42 @@ func copyBroadcastBars(src []BroadcastMsg) []BroadcastMsg {
 	dst := make([]BroadcastMsg, len(src))
 	for i, item := range src {
 		dst[i] = BroadcastMsg{
-			CandleOpenTime:    item.CandleOpenTime,
-			Open:              item.Open,
-			High:              item.High,
-			Low:               item.Low,
-			Close:             item.Close,
-			RowSize:           item.RowSize,
-			Clusters:          append([]Cluster(nil), item.Clusters...),
-			CandleDelta:       item.CandleDelta,
-			CVD:               item.CVD,
-			BuyTrades:         item.BuyTrades,
-			SellTrades:        item.SellTrades,
-			TotalVolume:       item.TotalVolume,
-			BuyVolume:         item.BuyVolume,
-			SellVolume:        item.SellVolume,
-			OI:                item.OI,
-			OIDelta:           item.OIDelta,
-			BestBid:           item.BestBid,
-			BestBidSize:       item.BestBidSize,
-			BestAsk:           item.BestAsk,
-			BestAskSize:       item.BestAskSize,
-			Bids:              copyBookLevels(item.Bids),
-			Asks:              copyBookLevels(item.Asks),
-			UnfinishedLow:     item.UnfinishedLow,
-			UnfinishedHigh:    item.UnfinishedHigh,
-			RecentTrades:      copyTapeTrades(item.RecentTrades),
-			OrderflowCoverage: item.OrderflowCoverage,
-			DataSource:        item.DataSource,
+			CandleOpenTime:      item.CandleOpenTime,
+			Open:                item.Open,
+			High:                item.High,
+			Low:                 item.Low,
+			Close:               item.Close,
+			RowSize:             item.RowSize,
+			Clusters:            append([]Cluster(nil), item.Clusters...),
+			CandleDelta:         item.CandleDelta,
+			CVD:                 item.CVD,
+			BuyTrades:           item.BuyTrades,
+			SellTrades:          item.SellTrades,
+			TotalVolume:         item.TotalVolume,
+			BuyVolume:           item.BuyVolume,
+			SellVolume:          item.SellVolume,
+			OI:                  item.OI,
+			OIDelta:             item.OIDelta,
+			BestBid:             item.BestBid,
+			BestBidSize:         item.BestBidSize,
+			BestAsk:             item.BestAsk,
+			BestAskSize:         item.BestAskSize,
+			Bids:                copyBookLevels(item.Bids),
+			Asks:                copyBookLevels(item.Asks),
+			UnfinishedLow:       item.UnfinishedLow,
+			UnfinishedHigh:      item.UnfinishedHigh,
+			AbsorptionLow:       item.AbsorptionLow,
+			AbsorptionHigh:      item.AbsorptionHigh,
+			ExhaustionLow:       item.ExhaustionLow,
+			ExhaustionHigh:      item.ExhaustionHigh,
+			SweepBuy:            item.SweepBuy,
+			SweepSell:           item.SweepSell,
+			DeltaDivergenceBull: item.DeltaDivergenceBull,
+			DeltaDivergenceBear: item.DeltaDivergenceBear,
+			RecentTrades:        copyTapeTrades(item.RecentTrades),
+			Alerts:              append([]string(nil), item.Alerts...),
+			OrderflowCoverage:   item.OrderflowCoverage,
+			DataSource:          item.DataSource,
 		}
 	}
 	return dst

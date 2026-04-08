@@ -67,6 +67,12 @@ const SHADING_MODES = [
   { value: "adaptive", label: "Adaptive" },
 ];
 
+const PROFILE_STUDIES = [
+  { value: "visible", label: "Visible Profile" },
+  { value: "session", label: "Session Profile" },
+  { value: "composite", label: "Composite Profile" },
+];
+
 const FEATURE_TABS = [
   { key: "vol", label: "Vol", supported: true },
   { key: "tcount", label: "TCount", supported: true },
@@ -186,7 +192,7 @@ export default function Toolbar({
           onChange={(value) => updateSetting("shadingMode", value)}
         />
         <Dropdown
-          label="Data"
+          label="Text"
           value={settings.dataView}
           options={DATA_VIEWS}
           onChange={(value) => updateSetting("dataView", value)}
@@ -196,6 +202,13 @@ export default function Toolbar({
           value={settings.candleStyle}
           options={CANDLE_STYLES}
           onChange={(value) => updateSetting("candleStyle", value)}
+        />
+        <Dropdown
+          label="Profile"
+          value={settings.profileStudy || "visible"}
+          options={PROFILE_STUDIES}
+          onChange={(value) => updateSetting("profileStudy", value)}
+          wide
         />
       </div>
 

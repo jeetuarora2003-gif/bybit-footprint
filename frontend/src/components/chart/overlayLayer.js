@@ -54,7 +54,7 @@ export function drawGrid(ctx, chartW, pMin, pMax, pStep, p2y) {
   }
 }
 
-export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible) {
+export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible, modeFlags) {
   ctx.fillStyle = "#0c0f15";
   ctx.fillRect(chartW, 0, axisW, chartH);
   ctx.strokeStyle = "rgba(255,255,255,0.06)";
@@ -65,7 +65,7 @@ export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y
   ctx.stroke();
 
   ctx.fillStyle = TEXT_COLOR;
-  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.font = `${modeFlags?.axisFontSize ?? 10}px 'JetBrains Mono', monospace`;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
 
@@ -87,22 +87,35 @@ export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y
   const y = p2y(last.close);
   const color = last.close >= last.open ? GREEN : RED;
   ctx.strokeStyle = color;
-  ctx.lineWidth = 0.6;
-  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
   ctx.beginPath();
   ctx.moveTo(0, y);
   ctx.lineTo(chartW, y);
   ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = color;
-  ctx.fillRect(chartW, y - 9, axisW, 18);
-  ctx.fillStyle = "#fff";
-  ctx.font = "bold 10px 'JetBrains Mono', monospace";
-  ctx.textAlign = "center";
-  ctx.fillText(formatChartPrice(last.close), chartW + axisW / 2, y);
+  if ((modeFlags?.currentPriceLabel ?? "split") === "split") {
+    const symbolW = 46;
+    ctx.fillStyle = "rgba(10,14,20,0.96)";
+    ctx.fillRect(chartW, y - 10, symbolW, 20);
+    ctx.fillStyle = color;
+    ctx.fillRect(chartW + symbolW, y - 10, axisW - symbolW, 20);
+    ctx.fillStyle = color;
+    ctx.font = "bold 11px 'JetBrains Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("BTCUSDT", chartW + symbolW / 2, y);
+    ctx.fillStyle = "#0b0e14";
+    ctx.fillText(formatChartPrice(last.close), chartW + symbolW + (axisW - symbolW) / 2, y);
+  } else {
+    ctx.fillStyle = color;
+    ctx.fillRect(chartW, y - 9, axisW, 18);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 10px 'JetBrains Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(formatChartPrice(last.close), chartW + axisW / 2, y);
+  }
 }
 
-export function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x, axisW) {
+export function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x, axisW, modeFlags) {
   ctx.fillStyle = "#0c0f15";
   ctx.fillRect(0, chartH, chartW + axisW, TIME_AXIS_H);
   ctx.strokeStyle = "rgba(255,255,255,0.06)";
@@ -113,7 +126,7 @@ export function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x,
   ctx.stroke();
 
   ctx.fillStyle = TEXT_COLOR;
-  ctx.font = "9px 'JetBrains Mono', monospace";
+  ctx.font = `${modeFlags?.timeAxisFontSize ?? 9}px 'JetBrains Mono', monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -157,11 +170,19 @@ export function drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, axis
   ctx.fillText(formatChartPrice(hoveredPrice), chartW + axisW / 2, mouse.y);
 }
 
-export function drawSessionProfile(ctx, visible, chartH, p2y, rowSize) {
+export function drawProfileStudy(ctx, sourceCandles, chartH, p2y, rowSize) {
   const profile = new Map();
-  for (const candle of visible) {
-    for (const cluster of candle.clusters || []) {
-      profile.set(cluster.price, (profile.get(cluster.price) || 0) + (cluster.totalVol || 0));
+  for (const candle of sourceCandles) {
+    const clusters = candle.clusters || [];
+    if (clusters.length > 0) {
+      for (const cluster of clusters) {
+        profile.set(cluster.price, (profile.get(cluster.price) || 0) + (cluster.totalVol || 0));
+      }
+      continue;
+    }
+    const fallbackPrice = Math.floor((Number(candle.close) || 0) / rowSize) * rowSize;
+    if (fallbackPrice > 0 && (candle.total_volume || 0) > 0) {
+      profile.set(fallbackPrice, (profile.get(fallbackPrice) || 0) + (candle.total_volume || 0));
     }
   }
 
@@ -186,6 +207,24 @@ export function drawSessionProfile(ctx, visible, chartH, p2y, rowSize) {
     ctx.fillStyle = price === pocPrice ? PROFILE_POC : PROFILE_COLOR;
     ctx.fillRect(0, rowTop, width, Math.max(1, rowH - 0.5));
   }
+}
+
+export function selectProfileSource(allCandles, visible, profileStudy) {
+  if (!visible?.length) return [];
+  if (profileStudy === "composite") {
+    return allCandles;
+  }
+  if (profileStudy === "session") {
+    const lastVisible = visible.at(-1);
+    const lastDate = new Date(lastVisible.candle_open_time);
+    return allCandles.filter((candle) => {
+      const date = new Date(candle.candle_open_time);
+      return date.getUTCFullYear() === lastDate.getUTCFullYear()
+        && date.getUTCMonth() === lastDate.getUTCMonth()
+        && date.getUTCDate() === lastDate.getUTCDate();
+    });
+  }
+  return visible;
 }
 
 export function drawLiquidityHeatmap(ctx, visible, startIdx, i2x, p2y, candleW, fallbackRowSize, chartH, maxLadderSize) {
