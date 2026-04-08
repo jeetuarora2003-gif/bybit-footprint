@@ -139,6 +139,12 @@ export default function Toolbar({
   toggleFeature,
   onApplyPreset,
   onResetWorkspace,
+  replay,
+  onStartReplay,
+  onStopReplay,
+  onToggleReplayPlayback,
+  onStepReplay,
+  onCycleReplaySpeed,
 }) {
   const applyClusterMode = (value) => {
     updateSetting("clusterMode", value);
@@ -228,6 +234,23 @@ export default function Toolbar({
       </div>
 
       <div className="tb-right">
+        {replay?.enabled ? (
+          <>
+            <button className="tb-btn tb-btn--accent" onClick={onStopReplay}>Exit Replay</button>
+            <button className="tb-btn tb-btn--icon" onClick={() => onStepReplay(-1)}>{"<"}</button>
+            <button className="tb-btn tb-btn--icon" onClick={onToggleReplayPlayback}>
+              {replay.playing ? "Pause" : "Play"}
+            </button>
+            <button className="tb-btn tb-btn--icon" onClick={() => onStepReplay(1)}>{">"}</button>
+            <button className="tb-btn" onClick={onCycleReplaySpeed}>{replay.speed}x</button>
+            <div className="tb-sep" />
+          </>
+        ) : (
+          <>
+            <button className="tb-btn" onClick={onStartReplay}>Replay</button>
+            <div className="tb-sep" />
+          </>
+        )}
         <span className="tb-btn tb-btn--static mono">
           {settings.clusterMode}
         </span>

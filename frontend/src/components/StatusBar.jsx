@@ -23,6 +23,12 @@ export default function StatusBar({
   onResetView,
   onAutoFitView,
   settings,
+  replay,
+  onStartReplay,
+  onStopReplay,
+  onToggleReplayPlayback,
+  onStepReplay,
+  onCycleReplaySpeed,
 }) {
   const now = new Date();
   const clock = now.toLocaleTimeString([], {
@@ -32,6 +38,13 @@ export default function StatusBar({
   });
   const hoveredPrice = crosshairData?.hoveredPrice ?? crosshairData?.close ?? crosshairData?.best_bid ?? crosshairData?.best_ask ?? null;
   const hoveredCluster = crosshairData?.hoveredCluster ?? null;
+  const replayTime = replay?.enabled && liveCandle?.candle_open_time
+    ? new Date(Number(liveCandle.candle_open_time)).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+    : null;
 
   return (
     <div className="status-bar">
@@ -73,12 +86,35 @@ export default function StatusBar({
         <span className="stb-info">
           Mode: {CLUSTER_LABELS[settings.clusterMode] ?? settings.clusterMode}
         </span>
+        {replay?.enabled && (
+          <>
+            <span className="stb-sep">|</span>
+            <span className="stb-info">Replay: {replay.playing ? "playing" : "paused"} {replayTime ? `@ ${replayTime}` : ""}</span>
+          </>
+        )}
       </div>
 
       <div className="stb-right">
         <span className="stb-dot" style={{ background: status === "connected" ? "var(--green)" : "var(--red)" }} />
         <span className="stb-info">{status}</span>
         <span className="stb-sep">|</span>
+        {replay?.enabled ? (
+          <>
+            <button className="stb-action" onClick={onStopReplay}>Exit Replay</button>
+            <button className="stb-action" onClick={() => onStepReplay(-1)}>{"<"}</button>
+            <button className="stb-action" onClick={onToggleReplayPlayback}>
+              {replay.playing ? "Pause" : "Play"}
+            </button>
+            <button className="stb-action" onClick={() => onStepReplay(1)}>{">"}</button>
+            <button className="stb-action" onClick={onCycleReplaySpeed}>{replay.speed}x</button>
+            <span className="stb-sep">|</span>
+          </>
+        ) : (
+          <>
+            <button className="stb-action" onClick={onStartReplay}>Replay</button>
+            <span className="stb-sep">|</span>
+          </>
+        )}
         <button className="stb-action" onClick={onResetView}>Reset View</button>
         <button className="stb-action" onClick={onAutoFitView}>Fit Y</button>
         <span className="stb-clock mono">{clock}</span>

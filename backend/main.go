@@ -153,11 +153,11 @@ type BroadcastMsg struct {
 
 // Bybit BTCUSDT linear priceFilter.tickSize is 0.10 as of 2026-04-08.
 const rowSize = 0.10
-const maxHistory = 500
+const maxHistory = 1500
 const maxSeenTradeIDs = 200000
 const seenTradeIDTrimBatch = 1024
-const maxRecentTrades = 120
-const maxRecentDepthSnapshots = 4000
+const maxRecentTrades = 1500
+const maxRecentDepthSnapshots = 12000
 
 type bucketAccum struct {
 	buyVol     float64

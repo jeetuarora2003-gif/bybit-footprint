@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useWebSocket from "./hooks/useWebSocket";
 import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
@@ -35,12 +35,37 @@ const CLASSIC_PRESET = {
 };
 
 const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
+const REPLAY_SPEEDS = [1, 2, 4, 8];
+const TIMEFRAME_MS = {
+  "1m": 60000,
+  "2m": 120000,
+  "3m": 180000,
+  "5m": 300000,
+  "10m": 600000,
+  "15m": 900000,
+  "30m": 1800000,
+  "1h": 3600000,
+  "2h": 7200000,
+  "4h": 14400000,
+  "6h": 21600000,
+  "8h": 28800000,
+  "12h": 43200000,
+  D: 86400000,
+  W: 604800000,
+  M: 2592000000,
+};
 
 export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [crosshairData, setCrosshairData] = useState(null);
   const [activeFeatureArr, setActiveFeatureArr] = useState(DEFAULT_FEATURES);
   const [viewCommand, setViewCommand] = useState({ type: "reset", nonce: 1 });
+  const [replay, setReplay] = useState({
+    enabled: false,
+    playing: false,
+    index: null,
+    speed: 1,
+  });
 
   const activeFeatures = useMemo(() => new Set(activeFeatureArr), [activeFeatureArr]);
 
@@ -71,7 +96,83 @@ export default function App() {
   };
 
   const { candles, liveCandle, recentTrades, depthHistory, status } = useWebSocket(settings.timeframe, settings.tickSize);
-  const allCandles = liveCandle ? [...candles, liveCandle] : candles;
+  const allCandles = useMemo(() => (liveCandle ? [...candles, liveCandle] : candles), [candles, liveCandle]);
+  const replayMaxIndex = Math.max(0, allCandles.length - 1);
+  const effectiveReplayIndex = replay.enabled
+    ? Math.max(0, Math.min(replay.index ?? replayMaxIndex, replayMaxIndex))
+    : replayMaxIndex;
+  const displayedCandles = useMemo(() => {
+    if (!replay.enabled) return allCandles;
+    return allCandles.slice(0, effectiveReplayIndex + 1);
+  }, [allCandles, effectiveReplayIndex, replay.enabled]);
+  const displayedLiveCandle = replay.enabled ? displayedCandles.at(-1) ?? null : liveCandle;
+  const replayFrameMs = TIMEFRAME_MS[settings.timeframe] ?? 60000;
+  const replayCutoff = displayedLiveCandle?.candle_open_time != null
+    ? Number(displayedLiveCandle.candle_open_time) + replayFrameMs
+    : Number.MAX_SAFE_INTEGER;
+  const displayedTape = useMemo(() => (
+    replay.enabled
+      ? recentTrades.filter((trade) => Number(trade.timestamp) <= replayCutoff).slice(-150)
+      : recentTrades
+  ), [recentTrades, replay.enabled, replayCutoff]);
+
+  useEffect(() => {
+    if (!replay.enabled || !replay.playing) return undefined;
+
+    const interval = setInterval(() => {
+      setReplay((current) => {
+        if (!current.enabled || !current.playing) return current;
+        const nextIndex = Math.min(replayMaxIndex, (current.index ?? 0) + 1);
+        if (nextIndex >= replayMaxIndex) {
+          return { ...current, index: replayMaxIndex, playing: false };
+        }
+        return { ...current, index: nextIndex };
+      });
+    }, Math.max(80, 800 / replay.speed));
+
+    return () => clearInterval(interval);
+  }, [replay.enabled, replay.playing, replay.speed, replayMaxIndex]);
+
+  const startReplay = () => {
+    if (allCandles.length < 10) return;
+    const startIndex = Math.max(0, replayMaxIndex - Math.min(120, replayMaxIndex));
+    setReplay({
+      enabled: true,
+      playing: false,
+      index: startIndex,
+      speed: 1,
+    });
+    issueViewCommand("reset");
+  };
+
+  const stopReplay = () => {
+    setReplay((current) => ({ ...current, enabled: false, playing: false, index: null }));
+    issueViewCommand("reset");
+  };
+
+  const toggleReplayPlayback = () => {
+    setReplay((current) => {
+      if (!current.enabled) return current;
+      return { ...current, playing: !current.playing };
+    });
+  };
+
+  const stepReplay = (direction) => {
+    setReplay((current) => {
+      if (!current.enabled) return current;
+      const nextIndex = Math.max(0, Math.min(replayMaxIndex, (current.index ?? 0) + direction));
+      return { ...current, index: nextIndex, playing: false };
+    });
+  };
+
+  const cycleReplaySpeed = () => {
+    setReplay((current) => {
+      if (!current.enabled) return current;
+      const index = REPLAY_SPEEDS.indexOf(current.speed);
+      const nextSpeed = REPLAY_SPEEDS[(index + 1) % REPLAY_SPEEDS.length];
+      return { ...current, speed: nextSpeed };
+    });
+  };
 
   return (
     <div className="app-shell">
@@ -83,8 +184,14 @@ export default function App() {
         toggleFeature={toggleFeature}
         onApplyPreset={applyClassicPreset}
         onResetWorkspace={resetWorkspace}
+        replay={replay}
+        onStartReplay={startReplay}
+        onStopReplay={stopReplay}
+        onToggleReplayPlayback={toggleReplayPlayback}
+        onStepReplay={stepReplay}
+        onCycleReplaySpeed={cycleReplaySpeed}
       />
-      <InfoBar candle={liveCandle} settings={settings} />
+      <InfoBar candle={displayedLiveCandle} settings={settings} />
       <div className="app-body">
         <Sidebar
           settings={settings}
@@ -95,7 +202,7 @@ export default function App() {
         <div className="app-chart-area">
           <div className="app-main-chart">
             <ChartCanvas
-              candles={allCandles}
+              candles={displayedCandles}
               depthHistory={depthHistory}
               settings={settings}
               activeFeatures={activeFeatures}
@@ -103,16 +210,22 @@ export default function App() {
               viewCommand={viewCommand}
             />
           </div>
-          <SubPanels candles={allCandles} activeFeatures={activeFeatures} recentTrades={recentTrades} />
+          <SubPanels candles={displayedCandles} activeFeatures={activeFeatures} recentTrades={displayedTape} />
         </div>
       </div>
       <StatusBar
         crosshairData={crosshairData}
         status={status}
-        liveCandle={liveCandle}
+        liveCandle={displayedLiveCandle}
         onResetView={() => issueViewCommand("reset")}
         onAutoFitView={() => issueViewCommand("fit")}
         settings={settings}
+        replay={replay}
+        onStartReplay={startReplay}
+        onStopReplay={stopReplay}
+        onToggleReplayPlayback={toggleReplayPlayback}
+        onStepReplay={stepReplay}
+        onCycleReplaySpeed={cycleReplaySpeed}
       />
     </div>
   );
