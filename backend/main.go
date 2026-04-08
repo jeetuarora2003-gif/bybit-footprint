@@ -503,16 +503,21 @@ func (oi *OITracker) delta() float64 {
 //  Hub
 // ════════════════════════════════════════════════════════════════════
 
-type hub struct {
-	mu      sync.RWMutex
-	clients map[*websocket.Conn]struct{}
+type clientConfig struct {
+	Timeframe      string
+	TickMultiplier float64
 }
 
-func newHub() *hub { return &hub{clients: make(map[*websocket.Conn]struct{})} }
+type hub struct {
+	mu      sync.RWMutex
+	clients map[*websocket.Conn]clientConfig
+}
 
-func (h *hub) add(c *websocket.Conn) {
+func newHub() *hub { return &hub{clients: make(map[*websocket.Conn]clientConfig)} }
+
+func (h *hub) add(c *websocket.Conn, cfg clientConfig) {
 	h.mu.Lock()
-	h.clients[c] = struct{}{}
+	h.clients[c] = cfg
 	h.mu.Unlock()
 }
 
@@ -525,12 +530,55 @@ func (h *hub) remove(c *websocket.Conn) {
 
 func (h *hub) broadcast(data []byte) {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
+	clients := make([]*websocket.Conn, 0, len(h.clients))
 	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
 		if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
 			go h.remove(c)
 		}
 	}
+}
+
+func (h *hub) broadcastCandles(history []BroadcastMsg, live BroadcastMsg) {
+	h.mu.RLock()
+	clients := make(map[*websocket.Conn]clientConfig, len(h.clients))
+	for conn, cfg := range h.clients {
+		clients[conn] = cfg
+	}
+	h.mu.RUnlock()
+
+	for conn, cfg := range clients {
+		if err := sendAggregatedCandle(conn, cfg, history, live); err != nil {
+			go h.remove(conn)
+		}
+	}
+}
+
+func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []BroadcastMsg, live BroadcastMsg) error {
+	source := make([]BroadcastMsg, 0, len(history)+1)
+	source = append(source, history...)
+	if live.CandleOpenTime > 0 {
+		source = append(source, live)
+	}
+	aggregated := aggregateBroadcastBars(source, cfg.Timeframe, cfg.TickMultiplier)
+	if len(aggregated) == 0 {
+		return nil
+	}
+
+	payload, err := json.Marshal(struct {
+		Type    string       `json:"type"`
+		Payload BroadcastMsg `json:"payload"`
+	}{
+		Type:    "candle",
+		Payload: aggregated[len(aggregated)-1],
+	})
+	if err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -864,13 +912,10 @@ func main() {
 				UnfinishedHigh: unfinishedHigh,
 				RecentTrades:   tape,
 			}
+			historySnapshot := copyBroadcastBars(completedBars)
 			mu.Unlock()
 
-			data, err := json.Marshal(msg)
-			if err != nil {
-				continue
-			}
-			h.broadcast(data)
+			h.broadcastCandles(historySnapshot, msg)
 
 			if len(depthSnapshot.Bids) > 0 || len(depthSnapshot.Asks) > 0 {
 				depthData, err := json.Marshal(DepthEnvelope{
@@ -893,9 +938,12 @@ func main() {
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
+		timeframe := normalizeTimeframe(r.URL.Query().Get("timeframe"))
+		tickMultiplier := parseTickMultiplier(r.URL.Query().Get("tickSize"))
 		mu.Lock()
-		data, err := json.Marshal(completedBars)
+		historySnapshot := copyBroadcastBars(completedBars)
 		mu.Unlock()
+		data, err := json.Marshal(aggregateBroadcastBars(historySnapshot, timeframe, tickMultiplier))
 		if err != nil {
 			http.Error(w, "marshal error", 500)
 			return
@@ -935,8 +983,54 @@ func main() {
 		if err != nil {
 			return
 		}
+		cfg := clientConfig{
+			Timeframe:      normalizeTimeframe(r.URL.Query().Get("timeframe")),
+			TickMultiplier: parseTickMultiplier(r.URL.Query().Get("tickSize")),
+		}
 		log.Printf("[ws] client connected: %s", conn.RemoteAddr())
-		h.add(conn)
+		h.add(conn, cfg)
+
+		mu.Lock()
+		historySnapshot := copyBroadcastBars(completedBars)
+		var liveSnapshot BroadcastMsg
+		if candle != nil && candle.hasTick {
+			bidP, bidS, askP, askS := ob.bestBidAsk()
+			bids, asks := ob.topLevels(15)
+			clusters, unfinishedLow, unfinishedHigh := candle.footprint()
+			liveSnapshot = BroadcastMsg{
+				CandleOpenTime: candle.openTime,
+				Open:           candle.open,
+				High:           candle.high,
+				Low:            candle.low,
+				Close:          candle.close,
+				RowSize:        rowSize,
+				Clusters:       clusters,
+				CandleDelta:    round6(candle.delta),
+				CVD:            round6(cvd),
+				BuyTrades:      candle.buyTrades,
+				SellTrades:     candle.sellTrades,
+				TotalVolume:    round6(candle.buyVol + candle.sellVol),
+				BuyVolume:      round6(candle.buyVol),
+				SellVolume:     round6(candle.sellVol),
+				OI:             oi.get(),
+				OIDelta:        oi.delta(),
+				BestBid:        bidP,
+				BestBidSize:    bidS,
+				BestAsk:        askP,
+				BestAskSize:    askS,
+				Bids:           bids,
+				Asks:           asks,
+				UnfinishedLow:  unfinishedLow,
+				UnfinishedHigh: unfinishedHigh,
+				RecentTrades:   copyTapeTrades(recentTrades),
+			}
+		}
+		mu.Unlock()
+
+		if err := sendAggregatedCandle(conn, cfg, historySnapshot, liveSnapshot); err != nil {
+			h.remove(conn)
+			return
+		}
 		go func() {
 			defer h.remove(conn)
 			for {

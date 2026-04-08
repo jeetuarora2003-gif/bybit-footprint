@@ -478,7 +478,7 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
     }
   }
 
-  if (settings.showDOM && visible.length > 0) {
+  if (settings.showHeatmap && visible.length > 0) {
     if (depthHistory?.length) {
       drawDepthHistoryHeatmap(ctx, depthHistory, visible, startIdx, i2x, p2y, state.candleW, chartH, settings.timeframe, rowSize);
     } else {
@@ -801,7 +801,8 @@ function drawCandle(
 
   const barMax = candleW * 0.45;
 
-  for (const cluster of clusters) {
+  for (let clusterIndex = 0; clusterIndex < clusters.length; clusterIndex += 1) {
+    const cluster = clusters[clusterIndex];
     const yRowTop = p2y(cluster.price + candleRowSize);
     const yRowBottom = p2y(cluster.price);
     const rowH = Math.abs(yRowBottom - yRowTop);
@@ -849,7 +850,18 @@ function drawCandle(
       }
     }
 
-    drawClusterText(ctx, settings.dataView, cluster, centerX, rowTop, rowH, candleW, settings.shortNumbers);
+    drawClusterText(
+      ctx,
+      settings.dataView,
+      cluster,
+      centerX,
+      rowTop,
+      rowH,
+      candleW,
+      settings.shortNumbers,
+      clusterIndex,
+      clusters.length,
+    );
 
     if (featureFlags.showImbalanceMarkers) {
       drawImbalanceMarker(ctx, cluster, centerX, candleW, rowTop, rowH);
@@ -890,9 +902,9 @@ function drawCandle(
   }
 }
 
-function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW, shortNumbers) {
+function drawClusterText(ctx, dataView, cluster, centerX, rowTop, rowH, candleW, shortNumbers, clusterIndex, clusterCount) {
   const minFont = 6;
-  if (rowH < minFont || candleW < 20 || dataView === "none") return;
+  if (!shouldRenderClusterText(dataView, rowH, candleW, clusterIndex, clusterCount)) return;
 
   const leftText = fmtFootprintValue(cluster.buyVol, { shortNumbers });
   const rightText = fmtFootprintValue(cluster.sellVol, { shortNumbers });
@@ -1217,7 +1229,7 @@ function drawDepthHistoryHeatmap(ctx, depthHistory, visible, startIdx, i2x, p2y,
     const frameMs = frameDurationMs(timeframe, frameOpen);
     const progress = clamp((Number(snapshot.timestamp) - frameOpen) / frameMs, 0, 0.999);
     const candleCenter = i2x(candleIndex);
-    const columnWidth = Math.max(1, Math.min(4, candleW / 10));
+    const columnWidth = Math.max(1, Math.min(3, candleW / 14));
     const left = candleCenter - candleW / 2 + progress * candleW;
     const rowSize = Number(snapshot.row_size) || fallbackRowSize;
 
@@ -1367,6 +1379,30 @@ function getClusterFontSize(rowH, candleW, text, dataView) {
   const widthLimited = widthBudget / (charCount * 0.62);
   const heightLimited = rowH - 1;
   return Math.min(maxFont, Math.max(minFont, Math.min(widthLimited, heightLimited)));
+}
+
+function shouldRenderClusterText(dataView, rowH, candleW, clusterIndex, clusterCount) {
+  if (dataView === "none") return false;
+  if (dataView === "bidAsk" || dataView === "imbalance") {
+    if (rowH < 9 || candleW < 38) return false;
+  } else if (rowH < 7 || candleW < 28) {
+    return false;
+  }
+
+  const stride = getClusterTextStride(rowH, candleW, dataView, clusterCount);
+  return clusterIndex % stride === 0;
+}
+
+function getClusterTextStride(rowH, candleW, dataView, clusterCount) {
+  if (dataView === "bidAsk" || dataView === "imbalance") {
+    if (rowH < 12 || candleW < 52) return 3;
+    if (rowH < 16 || candleW < 64) return 2;
+  } else {
+    if (rowH < 10 || candleW < 42) return 2;
+  }
+
+  if (clusterCount > 28 && rowH < 18) return 2;
+  return 1;
 }
 
 function clamp(value, min, max) {

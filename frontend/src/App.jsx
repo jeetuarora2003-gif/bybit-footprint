@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
   showVA: true,
   showCrosshair: true,
   showDOM: true,
+  showHeatmap: false,
   vaPercent: 70,
   shadingMode: "adaptive",
   shortNumbers: true,
@@ -32,6 +33,7 @@ const CLASSIC_PRESET = {
   showPOC: true,
   showVA: true,
   showDOM: true,
+  showHeatmap: false,
   shadingMode: "adaptive",
   shortNumbers: true,
 };

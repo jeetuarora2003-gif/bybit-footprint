@@ -81,13 +81,13 @@ const FEATURE_TABS = [
 ];
 
 const MODE_PRESETS = {
-  void: { dataView: "none", candleStyle: "colorCandle", showVA: false, showPOC: false, showDOM: false },
-  volumeProfile: { dataView: "volume", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false },
-  deltaProfile: { dataView: "delta", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false },
-  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: true },
-  volumeCluster: { dataView: "volume", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false },
-  deltaCluster: { dataView: "delta", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false },
-  deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: false, showPOC: true, showDOM: true },
+  void: { dataView: "none", candleStyle: "colorCandle", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
+  volumeProfile: { dataView: "volume", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
+  deltaProfile: { dataView: "delta", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
+  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: true, showHeatmap: false },
+  volumeCluster: { dataView: "volume", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
+  deltaCluster: { dataView: "delta", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
+  deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: false, showPOC: true, showDOM: true, showHeatmap: false },
 };
 
 function Dropdown({ label, value, options, onChange, wide }) {
@@ -230,6 +230,12 @@ export default function Toolbar({
           onClick={() => updateSetting("showDOM", !settings.showDOM)}
         >
           DOM
+        </button>
+        <button
+          className={`tb-tab${settings.showHeatmap ? " tb-tab--active" : ""}`}
+          onClick={() => updateSetting("showHeatmap", !settings.showHeatmap)}
+        >
+          Heat
         </button>
         <button
           className={`tb-tab${settings.shortNumbers ? " tb-tab--active" : ""}`}

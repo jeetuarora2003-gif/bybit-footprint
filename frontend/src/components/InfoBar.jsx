@@ -1,8 +1,10 @@
 import "./InfoBar.css";
 import {
+  formatCompactValue,
   formatFootprintValue,
   formatPrice,
   formatRange,
+  formatSignedCompactValue,
   formatShortOriginalValue,
   formatSignedShortOriginalValue,
 } from "../utils/exoFormat";
@@ -41,10 +43,10 @@ export default function InfoBar({ candle, settings }) {
 
       <div className="ib-group">
         <span className="ib-label">Vol:</span>
-        <span className="ib-val">{current ? formatShortOriginalValue(current.total_volume, 1) : "-"}</span>
+        <span className="ib-val">{current ? formatCompactValue(current.total_volume) : "-"}</span>
         <span className="ib-label">Delta:</span>
         <span className="ib-val" style={{ color: current?.candle_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-          {current ? formatSignedShortOriginalValue(current.candle_delta, 1) : "-"}
+          {current ? formatSignedCompactValue(current.candle_delta) : "-"}
         </span>
       </div>
 
@@ -81,11 +83,11 @@ export default function InfoBar({ candle, settings }) {
       <div className="ib-group">
         <span className="ib-label">Bid:</span>
         <span className="ib-val" style={{ color: "#42a5f5" }}>
-          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatShortOriginalValue(current.best_bid_size, 1)}` : "-"}
+          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatCompactValue(current.best_bid_size)}` : "-"}
         </span>
         <span className="ib-label">Ask:</span>
         <span className="ib-val ib-red">
-          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatShortOriginalValue(current.best_ask_size, 1)}` : "-"}
+          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatCompactValue(current.best_ask_size)}` : "-"}
         </span>
       </div>
 

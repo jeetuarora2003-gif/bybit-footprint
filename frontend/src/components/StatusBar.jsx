@@ -1,9 +1,9 @@
 import "./StatusBar.css";
 import {
+  formatSignedCompactValue,
   formatFootprintValue,
   formatPrice,
   formatShortOriginalValue,
-  formatSignedShortOriginalValue,
 } from "../utils/exoFormat";
 
 const CLUSTER_LABELS = {
@@ -68,7 +68,7 @@ export default function StatusBar({
             <span className="stb-sep">|</span>
             <span className="stb-info">
               Delta: <span style={{ color: hoveredCluster.delta >= 0 ? "#42a5f5" : "var(--red)" }}>
-                {formatSignedShortOriginalValue(hoveredCluster.delta, 1)}
+                {formatSignedCompactValue(hoveredCluster.delta)}
               </span>
             </span>
           </>
@@ -76,7 +76,7 @@ export default function StatusBar({
         <span className="stb-sep">|</span>
         <span className="stb-info">
           CVD: <span style={{ color: referenceCandle?.cvd >= 0 ? "#42a5f5" : "var(--red)" }}>
-            {referenceCandle ? formatSignedShortOriginalValue(referenceCandle.cvd, 1) : "-"}
+            {referenceCandle ? formatSignedCompactValue(referenceCandle.cvd) : "-"}
           </span>
         </span>
         <span className="stb-sep">|</span>

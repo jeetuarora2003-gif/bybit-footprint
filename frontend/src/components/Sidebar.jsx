@@ -2,6 +2,7 @@ import "./Sidebar.css";
 
 const SIDEBAR_ITEMS = [
   { type: "setting", key: "showDOM", label: "DOM", color: "var(--accent)" },
+  { type: "setting", key: "showHeatmap", label: "HEAT", color: "var(--purple)" },
   { type: "setting", key: "showVA", label: "VA", color: "var(--green)" },
   { type: "setting", key: "showPOC", label: "POC", color: "var(--red)" },
   { type: "feature", key: "vol", label: "VOL", color: "var(--accent)" },
