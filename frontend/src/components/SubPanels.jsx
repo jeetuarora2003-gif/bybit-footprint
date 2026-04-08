@@ -16,31 +16,15 @@ const AXIS_W = 75;
 export default function SubPanels({ candles, activeFeatures }) {
   const cvdRef = useRef(null);
   const oiRef = useRef(null);
-  const candlesRef = useRef(candles);
-
-  useEffect(() => {
-    candlesRef.current = candles;
-  }, [candles]);
 
   const showCVD = true;
   const showOI = activeFeatures?.has?.("oi");
 
   useEffect(() => {
-    let running = true;
-    const loop = () => {
-      if (!running) return;
-      const current = candlesRef.current;
-      if (current.length > 0) {
-        if (showCVD) drawCVDPanel(cvdRef.current, current);
-        if (showOI) drawOIPanel(oiRef.current, current);
-      }
-      requestAnimationFrame(loop);
-    };
-    loop();
-    return () => {
-      running = false;
-    };
-  }, [showCVD, showOI]);
+    if (!candles.length) return;
+    if (showCVD) drawCVDPanel(cvdRef.current, candles);
+    if (showOI) drawOIPanel(oiRef.current, candles);
+  }, [candles, showCVD, showOI]);
 
   return (
     <div className="sub-panels">

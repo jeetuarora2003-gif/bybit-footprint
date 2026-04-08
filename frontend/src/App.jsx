@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import useBackendConfig from "./hooks/useBackendConfig";
 import useWebSocket from "./hooks/useWebSocket";
 import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
@@ -6,61 +7,18 @@ import InfoBar from "./components/InfoBar";
 import ChartCanvas from "./components/ChartCanvas";
 import SubPanels from "./components/SubPanels";
 import StatusBar from "./components/StatusBar";
+import {
+  CLASSIC_FEATURES,
+  CLASSIC_PRESET,
+  DEFAULT_CHART_SETTINGS,
+  DEFAULT_FEATURES,
+} from "./components/chart/modeRules";
 import "./App.css";
 
-const DEFAULT_SETTINGS = {
-  clusterMode: "bidAskProfile",
-  candleStyle: "borderedCandle",
-  dataView: "bidAsk",
-  timeframe: "1m",
-  tickSize: "1",
-  showPOC: true,
-  showVA: true,
-  showCrosshair: true,
-  showDOM: false,
-  showHeatmap: false,
-  vaPercent: 70,
-  shadingMode: "adaptive",
-  shortNumbers: true,
-};
-
-const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
-
-const CLASSIC_PRESET = {
-  clusterMode: "deltaLadder",
-  candleStyle: "borderedCandle",
-  dataView: "bidAsk",
-  showPOC: true,
-  showVA: true,
-  showDOM: false,
-  showHeatmap: false,
-  shadingMode: "adaptive",
-  shortNumbers: true,
-};
-
-const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
 const REPLAY_SPEEDS = [1, 2, 4, 8];
-const TIMEFRAME_MS = {
-  "1m": 60000,
-  "2m": 120000,
-  "3m": 180000,
-  "5m": 300000,
-  "10m": 600000,
-  "15m": 900000,
-  "30m": 1800000,
-  "1h": 3600000,
-  "2h": 7200000,
-  "4h": 14400000,
-  "6h": 21600000,
-  "8h": 28800000,
-  "12h": 43200000,
-  D: 86400000,
-  W: 604800000,
-  M: 2592000000,
-};
 
 export default function App() {
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState(DEFAULT_CHART_SETTINGS);
   const [crosshairData, setCrosshairData] = useState(null);
   const [activeFeatureArr, setActiveFeatureArr] = useState(DEFAULT_FEATURES);
   const [viewCommand, setViewCommand] = useState({ type: "reset", nonce: 1 });
@@ -70,8 +28,13 @@ export default function App() {
     index: null,
     speed: 1,
   });
+  const backendConfig = useBackendConfig();
 
   const activeFeatures = useMemo(() => new Set(activeFeatureArr), [activeFeatureArr]);
+  const resolvedSettings = useMemo(() => ({
+    ...settings,
+    vaPercent: backendConfig?.value_area_percent ?? settings.vaPercent,
+  }), [backendConfig, settings]);
 
   const updateSetting = (key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -94,7 +57,7 @@ export default function App() {
   };
 
   const resetWorkspace = () => {
-    setSettings(DEFAULT_SETTINGS);
+    setSettings(DEFAULT_CHART_SETTINGS);
     setActiveFeatureArr(DEFAULT_FEATURES);
     issueViewCommand("reset");
   };
@@ -172,7 +135,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <Toolbar
-        settings={settings}
+        settings={resolvedSettings}
         updateSetting={updateSetting}
         status={status}
         activeFeatureArr={activeFeatureArr}
@@ -186,10 +149,10 @@ export default function App() {
         onStepReplay={stepReplay}
         onCycleReplaySpeed={cycleReplaySpeed}
       />
-      <InfoBar candle={infoCandle} settings={settings} />
+      <InfoBar candle={infoCandle} settings={resolvedSettings} />
       <div className="app-body">
         <Sidebar
-          settings={settings}
+          settings={resolvedSettings}
           updateSetting={updateSetting}
           activeFeatureArr={activeFeatureArr}
           toggleFeature={toggleFeature}
@@ -199,7 +162,7 @@ export default function App() {
             <ChartCanvas
               candles={displayedCandles}
               depthHistory={depthHistory}
-              settings={settings}
+              settings={resolvedSettings}
               activeFeatures={activeFeatures}
               onCrosshairMove={setCrosshairData}
               viewCommand={viewCommand}
@@ -214,7 +177,7 @@ export default function App() {
         liveCandle={displayedLiveCandle}
         onResetView={() => issueViewCommand("reset")}
         onAutoFitView={() => issueViewCommand("fit")}
-        settings={settings}
+        settings={resolvedSettings}
         replay={replay}
         onStartReplay={startReplay}
         onStopReplay={stopReplay}

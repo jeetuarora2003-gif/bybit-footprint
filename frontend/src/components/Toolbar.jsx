@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import "./Toolbar.css";
+import { MODE_PRESETS } from "./chart/modeRules";
 
 const CLUSTER_MODES = [
   { value: "void", label: "Void" },
@@ -79,16 +80,6 @@ const FEATURE_TABS = [
   { key: "ns", label: "NS", supported: false },
   { key: "vwap", label: "VWAP", supported: true },
 ];
-
-const MODE_PRESETS = {
-  void: { dataView: "none", candleStyle: "colorCandle", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
-  volumeProfile: { dataView: "volume", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
-  deltaProfile: { dataView: "delta", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
-  bidAskProfile: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: true, showPOC: true, showDOM: false, showHeatmap: false },
-  volumeCluster: { dataView: "volume", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
-  deltaCluster: { dataView: "delta", candleStyle: "embed", showVA: false, showPOC: false, showDOM: false, showHeatmap: false },
-  deltaLadder: { dataView: "bidAsk", candleStyle: "borderedCandle", showVA: false, showPOC: true, showDOM: true, showHeatmap: false },
-};
 
 function Dropdown({ label, value, options, onChange, wide }) {
   const [open, setOpen] = useState(false);

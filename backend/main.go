@@ -158,7 +158,6 @@ const maxSeenTradeIDs = 200000
 const seenTradeIDTrimBatch = 1024
 const maxRecentTrades = 1500
 const maxRecentDepthSnapshots = 12000
-const imbalanceThreshold = 2.5
 
 type bucketAccum struct {
 	buyVol     float64
@@ -248,38 +247,39 @@ func annotateClusterSignals(clusters []Cluster) (bool, bool) {
 		return false, false
 	}
 
+	cfg := currentStudyConfig()
 	bullish := make([]bool, len(clusters))
 	bearish := make([]bool, len(clusters))
 
 	for i := range clusters {
 		if i > 0 {
 			below := clusters[i-1]
-			if below.BuyVol > 0 && clusters[i].SellVol >= below.BuyVol*imbalanceThreshold && clusters[i].SellVol >= 1 {
+			if below.BuyVol > 0 && clusters[i].SellVol >= below.BuyVol*cfg.ImbalanceThreshold && clusters[i].SellVol >= cfg.MinImbalanceVolume {
 				bearish[i] = true
 				clusters[i].ImbalanceSell = true
 			}
 		}
 		if i+1 < len(clusters) {
 			above := clusters[i+1]
-			if above.SellVol > 0 && clusters[i].BuyVol >= above.SellVol*imbalanceThreshold && clusters[i].BuyVol >= 1 {
+			if above.SellVol > 0 && clusters[i].BuyVol >= above.SellVol*cfg.ImbalanceThreshold && clusters[i].BuyVol >= cfg.MinImbalanceVolume {
 				bullish[i] = true
 				clusters[i].ImbalanceBuy = true
 			}
 		}
 	}
 
-	markStackedSide(clusters, bullish, true)
-	markStackedSide(clusters, bearish, false)
+	markStackedSide(clusters, bullish, true, cfg.StackedLevels)
+	markStackedSide(clusters, bearish, false, cfg.StackedLevels)
 
 	unfinishedLow := clusters[0].BuyVol > 0 && clusters[0].SellVol > 0
 	unfinishedHigh := clusters[len(clusters)-1].BuyVol > 0 && clusters[len(clusters)-1].SellVol > 0
 	return unfinishedLow, unfinishedHigh
 }
 
-func markStackedSide(clusters []Cluster, flags []bool, buySide bool) {
+func markStackedSide(clusters []Cluster, flags []bool, buySide bool, required int) {
 	streak := make([]int, 0, len(flags))
 	flush := func() {
-		if len(streak) < 3 {
+		if len(streak) < required {
 			streak = streak[:0]
 			return
 		}
@@ -608,6 +608,11 @@ func main() {
 	h := newHub()
 	ob := newOrderBook()
 	oi := &OITracker{}
+	configStore, err := newStudyConfigStore("data/study-config.json")
+	if err != nil {
+		log.Fatalf("study config init: %v", err)
+	}
+	runtimeStudyConfig = configStore
 	store, err := newPersistenceStore("data")
 	if err != nil {
 		log.Fatalf("persistence init: %v", err)
@@ -962,6 +967,44 @@ func main() {
 			return
 		}
 		w.Write(data)
+	})
+
+	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			data, err := json.Marshal(currentStudyConfig())
+			if err != nil {
+				http.Error(w, "marshal error", 500)
+				return
+			}
+			w.Write(data)
+		case http.MethodPost:
+			var next StudyConfig
+			if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
+				http.Error(w, "bad config payload", 400)
+				return
+			}
+			if err := configStore.Update(next); err != nil {
+				http.Error(w, "config update failed", 500)
+				return
+			}
+			data, err := json.Marshal(configStore.Get())
+			if err != nil {
+				http.Error(w, "marshal error", 500)
+				return
+			}
+			w.Write(data)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	http.HandleFunc("/depth-history", func(w http.ResponseWriter, r *http.Request) {
