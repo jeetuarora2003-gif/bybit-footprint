@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import "./SubPanels.css";
+import { formatCompactValue, formatSignedCompactValue } from "../utils/exoFormat";
 
 const BG = "#0b0e14";
 const GREEN = "#26a69a";
@@ -235,11 +236,10 @@ function drawOIPanel(canvas, candles) {
 }
 
 function fmtAxis(value) {
-  const abs = Math.abs(value);
-  if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  if (abs >= 1) return value.toFixed(1);
-  return value.toFixed(3);
+  const numeric = Number(value) || 0;
+  if (numeric > 0) return formatCompactValue(numeric);
+  if (numeric < 0) return formatSignedCompactValue(numeric);
+  return "0";
 }
 
 function fmtTapeTime(value) {
@@ -259,8 +259,5 @@ function fmtTapePrice(value) {
 }
 
 function fmtTapeVolume(value) {
-  const amount = Number(value || 0);
-  if (amount >= 1000) return `${(amount / 1000).toFixed(2)}K`;
-  if (amount >= 1) return amount.toFixed(3);
-  return amount.toFixed(4);
+  return formatCompactValue(value);
 }

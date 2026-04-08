@@ -6,49 +6,53 @@ export function formatPrice(value, digits = 1) {
   });
 }
 
-export function formatCompactValue(value, digits = 2) {
-  if (value == null || Number.isNaN(Number(value))) return "-";
+const BYBIT_QTY_STEP = 0.001;
 
-  const numeric = Number(value);
-  const abs = Math.abs(numeric);
-  if (abs >= 1e6) return `${(numeric / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(numeric / 1e3).toFixed(abs >= 1e4 ? 1 : 2)}K`;
-  if (abs >= 100) return numeric.toFixed(0);
-  if (abs >= 1) return numeric.toFixed(digits);
-  if (abs >= 0.01) return numeric.toFixed(3);
-  if (abs === 0) return "0";
-  return numeric.toFixed(4);
+function toDisplayLots(value) {
+  if (value == null || Number.isNaN(Number(value))) return null;
+  // Exocharts-style quantity readouts are easier to scan in whole lot units.
+  return Math.round(Number(value) / BYBIT_QTY_STEP);
 }
 
-export function formatSignedCompactValue(value, digits = 2) {
-  if (value == null || Number.isNaN(Number(value))) return "-";
-  const numeric = Number(value);
-  const formatted = formatCompactValue(Math.abs(numeric), digits);
-  if (numeric > 0) return `+${formatted}`;
-  if (numeric < 0) return `-${formatted}`;
+function formatWholeNumber(value) {
+  return Number(value).toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  });
+}
+
+function formatShortWholeNumber(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1e6) return `${Math.round(value / 1e6)}M`;
+  if (abs >= 1e3) return `${Math.round(value / 1e3)}K`;
+  return formatWholeNumber(value);
+}
+
+export function formatCompactValue(value) {
+  const lots = toDisplayLots(value);
+  if (lots == null) return "-";
+  return formatWholeNumber(lots);
+}
+
+export function formatSignedCompactValue(value) {
+  const lots = toDisplayLots(value);
+  if (lots == null) return "-";
+  const formatted = formatWholeNumber(Math.abs(lots));
+  if (lots > 0) return `+${formatted}`;
+  if (lots < 0) return `-${formatted}`;
   return "0";
 }
 
 export function formatFootprintValue(value, options = {}) {
-  const numeric = Number(value) || 0;
-  if (Math.abs(numeric) < 0.000001) return "";
+  const lots = toDisplayLots(value) ?? 0;
+  if (lots === 0) return "";
 
   const { signed = false, shortNumbers = false } = options;
-  let rendered = "";
+  const rendered = shortNumbers
+    ? formatShortWholeNumber(Math.abs(lots))
+    : formatWholeNumber(Math.abs(lots));
 
-  if (shortNumbers) {
-    rendered = formatCompactValue(Math.abs(numeric), 2);
-    rendered = rendered.replace(/\.0K$/, "K");
-  } else {
-    const abs = Math.abs(numeric);
-    const decimals = abs >= 1000 ? 0 : abs >= 100 ? 1 : abs >= 1 ? 3 : abs >= 0.01 ? 4 : 5;
-    rendered = abs.toFixed(decimals);
-  }
-
-  rendered = rendered.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
-
-  if (signed && numeric > 0) return `+${rendered}`;
-  if (numeric < 0) return `-${rendered}`;
+  if (signed && lots > 0) return `+${rendered}`;
+  if (lots < 0) return `-${rendered}`;
   return rendered;
 }
 
