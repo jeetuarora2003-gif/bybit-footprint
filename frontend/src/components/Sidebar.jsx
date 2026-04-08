@@ -6,6 +6,7 @@ const SIDEBAR_ITEMS = [
   { type: "setting", key: "showPOC", label: "POC", color: "var(--red)" },
   { type: "feature", key: "vol", label: "VOL", color: "var(--accent)" },
   { type: "feature", key: "fpbs", label: "IMB", color: "var(--green)" },
+  { type: "feature", key: "cs", label: "CS", color: "var(--accent)" },
   { type: "feature", key: "hl", label: "H/L", color: "var(--yellow)" },
   { type: "feature", key: "oi", label: "OI", color: "var(--purple)" },
   { type: "feature", key: "vwap", label: "VWAP", color: "var(--yellow)" },

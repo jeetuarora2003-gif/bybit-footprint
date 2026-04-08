@@ -22,7 +22,7 @@ const DEFAULT_SETTINGS = {
   shadingMode: "adaptive",
 };
 
-const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "dbars", "oi", "hl", "vwap"];
+const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
 
 const CLASSIC_PRESET = {
   clusterMode: "deltaLadder",
@@ -34,7 +34,7 @@ const CLASSIC_PRESET = {
   shadingMode: "adaptive",
 };
 
-const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "dbars", "oi", "hl", "vwap"];
+const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
 
 export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);

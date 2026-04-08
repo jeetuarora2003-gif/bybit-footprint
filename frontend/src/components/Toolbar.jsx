@@ -72,7 +72,7 @@ const FEATURE_TABS = [
   { key: "rekt", label: "Rekt", supported: false },
   { key: "fpbs", label: "FPBS", supported: true },
   { key: "tsize", label: "TSize", supported: true },
-  { key: "cs", label: "CS", supported: false },
+  { key: "cs", label: "CS", supported: true },
   { key: "dbars", label: "DBars", supported: true },
   { key: "oi", label: "OI", supported: true },
   { key: "hl", label: "HL", supported: true },
