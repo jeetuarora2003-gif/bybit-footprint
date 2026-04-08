@@ -103,6 +103,22 @@ type TapeTrade struct {
 	Seq       int64   `json:"seq"`
 }
 
+type DepthSnapshot struct {
+	Timestamp   int64       `json:"timestamp"`
+	RowSize     float64     `json:"row_size"`
+	BestBid     float64     `json:"best_bid"`
+	BestBidSize float64     `json:"best_bid_size"`
+	BestAsk     float64     `json:"best_ask"`
+	BestAskSize float64     `json:"best_ask_size"`
+	Bids        []BookLevel `json:"bids"`
+	Asks        []BookLevel `json:"asks"`
+}
+
+type DepthEnvelope struct {
+	Type    string        `json:"type"`
+	Payload DepthSnapshot `json:"payload"`
+}
+
 type BroadcastMsg struct {
 	CandleOpenTime int64       `json:"candle_open_time"`
 	Open           float64     `json:"open"`
@@ -141,6 +157,7 @@ const maxHistory = 500
 const maxSeenTradeIDs = 200000
 const seenTradeIDTrimBatch = 1024
 const maxRecentTrades = 120
+const maxRecentDepthSnapshots = 4000
 
 type bucketAccum struct {
 	buyVol     float64
@@ -291,6 +308,35 @@ func copyTapeTrades(src []TapeTrade) []TapeTrade {
 	}
 	dst := make([]TapeTrade, len(src))
 	copy(dst, src)
+	return dst
+}
+
+func copyBookLevels(src []BookLevel) []BookLevel {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]BookLevel, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func copyDepthSnapshots(src []DepthSnapshot) []DepthSnapshot {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]DepthSnapshot, len(src))
+	for i, snapshot := range src {
+		dst[i] = DepthSnapshot{
+			Timestamp:   snapshot.Timestamp,
+			RowSize:     snapshot.RowSize,
+			BestBid:     snapshot.BestBid,
+			BestBidSize: snapshot.BestBidSize,
+			BestAsk:     snapshot.BestAsk,
+			BestAskSize: snapshot.BestAskSize,
+			Bids:        copyBookLevels(snapshot.Bids),
+			Asks:        copyBookLevels(snapshot.Asks),
+		}
+	}
 	return dst
 }
 
@@ -516,6 +562,7 @@ func main() {
 		seenTradeSet  map[string]struct{}
 		completedBars []BroadcastMsg
 		recentTrades  []TapeTrade
+		recentDepth   []DepthSnapshot
 	)
 	seenTradeSet = make(map[string]struct{}, maxSeenTradeIDs)
 
@@ -702,6 +749,22 @@ func main() {
 			bids, asks := ob.topLevels(15)
 			clusters, unfinishedLow, unfinishedHigh := candle.footprint()
 			tape := copyTapeTrades(recentTrades)
+			depthSnapshot := DepthSnapshot{
+				Timestamp:   time.Now().UnixMilli(),
+				RowSize:     rowSize,
+				BestBid:     bidP,
+				BestBidSize: bidS,
+				BestAsk:     askP,
+				BestAskSize: askS,
+				Bids:        copyBookLevels(bids),
+				Asks:        copyBookLevels(asks),
+			}
+			if len(depthSnapshot.Bids) > 0 || len(depthSnapshot.Asks) > 0 {
+				recentDepth = append(recentDepth, depthSnapshot)
+				if len(recentDepth) > maxRecentDepthSnapshots {
+					recentDepth = recentDepth[len(recentDepth)-maxRecentDepthSnapshots:]
+				}
+			}
 
 			msg := BroadcastMsg{
 				CandleOpenTime: candle.openTime,
@@ -737,6 +800,16 @@ func main() {
 				continue
 			}
 			h.broadcast(data)
+
+			if len(depthSnapshot.Bids) > 0 || len(depthSnapshot.Asks) > 0 {
+				depthData, err := json.Marshal(DepthEnvelope{
+					Type:    "depth",
+					Payload: depthSnapshot,
+				})
+				if err == nil {
+					h.broadcast(depthData)
+				}
+			}
 		}
 	}()
 
@@ -772,6 +845,19 @@ func main() {
 		w.Write(data)
 	})
 
+	http.HandleFunc("/depth-history", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		data, err := json.Marshal(copyDepthSnapshots(recentDepth))
+		mu.Unlock()
+		if err != nil {
+			http.Error(w, "marshal error", 500)
+			return
+		}
+		w.Write(data)
+	})
+
 	// ── Local WS server on :8080 ──
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -793,6 +879,7 @@ func main() {
 	fmt.Println("▶  Footprint WS server on :8080")
 	fmt.Println("   Streams: publicTrade + orderbook.50 + tickers (BTCUSDT)")
 	fmt.Println("   History endpoint: GET /history")
+	fmt.Println("   Depth history endpoint: GET /depth-history")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 

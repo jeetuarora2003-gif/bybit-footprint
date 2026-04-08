@@ -59,6 +59,26 @@ function bucketPrice(price, rowSize) {
   return roundPrice(Math.floor((price + Number.EPSILON) / rowSize) * rowSize);
 }
 
+function normalizeBookLevels(levels) {
+  return (levels || []).map((level) => ({
+    price: Number(level.price) || 0,
+    size: Number(level.size) || 0,
+  }));
+}
+
+function normalizeDepthSnapshot(snapshot) {
+  return {
+    timestamp: Number(snapshot?.timestamp) || 0,
+    row_size: Number(snapshot?.row_size) || BASE_TICK_SIZE,
+    best_bid: Number(snapshot?.best_bid) || 0,
+    best_bid_size: Number(snapshot?.best_bid_size) || 0,
+    best_ask: Number(snapshot?.best_ask) || 0,
+    best_ask_size: Number(snapshot?.best_ask_size) || 0,
+    bids: normalizeBookLevels(snapshot?.bids),
+    asks: normalizeBookLevels(snapshot?.asks),
+  };
+}
+
 function markStacked(clusters, predicateKey, stackedKey) {
   let streak = [];
 
@@ -226,6 +246,7 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
   const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
   const [recentTrades, setRecentTrades] = useState([]);
+  const [depthHistory, setDepthHistory] = useState([]);
   const [status, setStatus] = useState("disconnected");
 
   const wsRef = useRef(null);
@@ -233,6 +254,7 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
   const connectRef = useRef(() => {});
   const stoppedRef = useRef(false);
   const baseCandlesRef = useRef(new Map());
+  const depthHistoryRef = useRef([]);
   const timeframeRef = useRef(timeframe);
   const tickSizeRef = useRef(tickSize);
 
@@ -264,6 +286,27 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     publishAggregated();
   }, [publishAggregated]);
 
+  const appendDepthSnapshots = useCallback((incoming) => {
+    const list = (Array.isArray(incoming) ? incoming : [incoming])
+      .map(normalizeDepthSnapshot)
+      .filter((snapshot) => snapshot.timestamp > 0);
+    if (list.length === 0) return;
+
+    const combined = [...depthHistoryRef.current];
+    for (const snapshot of list) {
+      const last = combined.at(-1);
+      if (last?.timestamp === snapshot.timestamp) {
+        combined[combined.length - 1] = snapshot;
+      } else if (!last || snapshot.timestamp > last.timestamp) {
+        combined.push(snapshot);
+      }
+    }
+
+    const trimmed = combined.slice(-4000);
+    depthHistoryRef.current = trimmed;
+    setDepthHistory(trimmed);
+  }, []);
+
   const fetchHistory = useCallback(async () => {
     try {
       const res = await fetch(`${BASE_HTTP}/history`);
@@ -288,6 +331,20 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     }
   }, []);
 
+  const fetchDepthHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${BASE_HTTP}/depth-history`);
+      const depth = await res.json();
+      if (Array.isArray(depth)) {
+        const normalized = depth.map(normalizeDepthSnapshot).filter((snapshot) => snapshot.timestamp > 0);
+        depthHistoryRef.current = normalized.slice(-4000);
+        setDepthHistory(depthHistoryRef.current);
+      }
+    } catch (error) {
+      console.warn("[depth-history] not available:", error.message);
+    }
+  }, []);
+
   const connect = useCallback(() => {
     if (stoppedRef.current) return;
     if (wsRef.current) wsRef.current.close();
@@ -295,6 +352,7 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     setStatus("connecting");
     fetchHistory();
     fetchTape();
+    fetchDepthHistory();
 
     const ws = new WebSocket(BASE_WS);
     wsRef.current = ws;
@@ -303,7 +361,16 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
 
     ws.onmessage = (evt) => {
       try {
-        upsertBaseCandles(JSON.parse(evt.data));
+        const message = JSON.parse(evt.data);
+        if (message?.type === "depth" && message?.payload) {
+          appendDepthSnapshots(message.payload);
+          return;
+        }
+        if (message?.type === "candle" && message?.payload) {
+          upsertBaseCandles(message.payload);
+          return;
+        }
+        upsertBaseCandles(message);
       } catch {
         // Ignore malformed frames from transient network/proxy issues.
       }
@@ -316,7 +383,7 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
       setStatus("disconnected");
       reconnectRef.current = setTimeout(() => connectRef.current(), 2000);
     };
-  }, [fetchHistory, fetchTape, upsertBaseCandles]);
+  }, [appendDepthSnapshots, fetchDepthHistory, fetchHistory, fetchTape, upsertBaseCandles]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -339,5 +406,5 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     publishAggregated();
   }, [timeframe, tickSize, publishAggregated]);
 
-  return { candles, liveCandle, recentTrades, status };
+  return { candles, liveCandle, recentTrades, depthHistory, status };
 }

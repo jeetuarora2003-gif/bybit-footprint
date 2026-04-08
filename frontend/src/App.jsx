@@ -70,7 +70,7 @@ export default function App() {
     issueViewCommand("reset");
   };
 
-  const { candles, liveCandle, recentTrades, status } = useWebSocket(settings.timeframe, settings.tickSize);
+  const { candles, liveCandle, recentTrades, depthHistory, status } = useWebSocket(settings.timeframe, settings.tickSize);
   const allCandles = liveCandle ? [...candles, liveCandle] : candles;
 
   return (
@@ -96,6 +96,7 @@ export default function App() {
           <div className="app-main-chart">
             <ChartCanvas
               candles={allCandles}
+              depthHistory={depthHistory}
               settings={settings}
               activeFeatures={activeFeatures}
               onCrosshairMove={setCrosshairData}

@@ -33,24 +33,44 @@ const PROFILE_MAX_W = 80;
 const DOM_MAX_W = 156;
 const DOM_PRICE_COL_W = 46;
 const DOM_SIDE_W = (DOM_MAX_W - DOM_PRICE_COL_W) / 2;
+const CHART_TF_MS = {
+  "1m": 60000,
+  "2m": 120000,
+  "3m": 180000,
+  "5m": 300000,
+  "10m": 600000,
+  "15m": 900000,
+  "30m": 1800000,
+  "1h": 3600000,
+  "2h": 7200000,
+  "4h": 14400000,
+  "6h": 21600000,
+  "8h": 28800000,
+  "12h": 43200000,
+  D: 86400000,
+  W: 604800000,
+  M: 2592000000,
+};
 
-export default function ChartCanvas({ candles, settings, activeFeatures, onCrosshairMove, viewCommand }) {
+export default function ChartCanvas({ candles, depthHistory = [], settings, activeFeatures, onCrosshairMove, viewCommand }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const goLiveBtnRef = useRef(null);
   const rafRef = useRef(null);
 
   const candlesRef = useRef(candles);
+  const depthHistoryRef = useRef(depthHistory);
   const settingsRef = useRef(settings);
   const featuresRef = useRef(activeFeatures);
   const crosshairCbRef = useRef(onCrosshairMove);
 
   useEffect(() => {
     candlesRef.current = candles;
+    depthHistoryRef.current = depthHistory;
     settingsRef.current = settings;
     featuresRef.current = activeFeatures;
     crosshairCbRef.current = onCrosshairMove;
-  }, [candles, settings, activeFeatures, onCrosshairMove]);
+  }, [candles, depthHistory, settings, activeFeatures, onCrosshairMove]);
 
   useEffect(() => {
     if (!viewCommand) return;
@@ -103,6 +123,7 @@ export default function ChartCanvas({ candles, settings, activeFeatures, onCross
         containerRef.current,
         stateRef.current,
         candlesRef.current,
+        depthHistoryRef.current,
         settingsRef.current,
         featuresRef.current,
       );
@@ -301,7 +322,7 @@ function getRowSize(settings) {
   return BASE_TICK_SIZE * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
 }
 
-function drawFrame(canvas, container, state, candles, settings, activeFeatures) {
+function drawFrame(canvas, container, state, candles, depthHistory, settings, activeFeatures) {
   if (!canvas || !container || !candles?.length) return;
 
   const dpr = window.devicePixelRatio || 1;
@@ -441,7 +462,11 @@ function drawFrame(canvas, container, state, candles, settings, activeFeatures) 
   }
 
   if (settings.showDOM && visible.length > 0) {
-    drawLiquidityHeatmap(ctx, visible, startIdx, i2x, p2y, state.candleW, rowSize, chartH, maxLadderSize);
+    if (depthHistory?.length) {
+      drawDepthHistoryHeatmap(ctx, depthHistory, visible, startIdx, i2x, p2y, state.candleW, chartH, settings.timeframe, rowSize);
+    } else {
+      drawLiquidityHeatmap(ctx, visible, startIdx, i2x, p2y, state.candleW, rowSize, chartH, maxLadderSize);
+    }
   }
 
   if (featureFlags.showSessionProfile) {
@@ -586,6 +611,35 @@ function drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x) {
       chartH + TIME_AXIS_H / 2,
     );
   }
+}
+
+function frameDurationMs(timeframe, frameOpen) {
+  if (timeframe === "M") {
+    const date = new Date(frameOpen);
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) - Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  }
+  return CHART_TF_MS[timeframe] ?? CHART_TF_MS["1m"];
+}
+
+function frameOpenTimeForTimeframe(timestamp, timeframe) {
+  const date = new Date(timestamp);
+
+  if (timeframe === "D") {
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  }
+
+  if (timeframe === "W") {
+    const day = date.getUTCDay();
+    const diffToMonday = (day + 6) % 7;
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - diffToMonday);
+  }
+
+  if (timeframe === "M") {
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  }
+
+  const tfMs = frameDurationMs(timeframe, timestamp);
+  return timestamp - (timestamp % tfMs);
 }
 
 function zoomPriceRange(state, chartH, mouseY, zoomFactor) {
@@ -1069,6 +1123,64 @@ function drawHeatmapSide(ctx, levels, maxLadderSize, left, width, p2y, rowSize, 
       ctx.lineWidth = 1;
       ctx.strokeRect(left + 1.5, rowTop + 0.5, Math.max(1, width - 1), Math.max(1, rowH - 1));
     }
+  }
+}
+
+function drawDepthHistoryHeatmap(ctx, depthHistory, visible, startIdx, i2x, p2y, candleW, chartH, timeframe, fallbackRowSize) {
+  if (!depthHistory?.length || !visible?.length) return;
+
+  const firstVisible = visible[0];
+  const lastVisible = visible.at(-1);
+  const visibleStart = Number(firstVisible?.candle_open_time) || 0;
+  const lastOpen = Number(lastVisible?.candle_open_time) || visibleStart;
+  const visibleEnd = lastOpen + frameDurationMs(timeframe, lastOpen);
+  const candleIndexByOpen = new Map();
+  visible.forEach((candle, index) => {
+    candleIndexByOpen.set(Number(candle.candle_open_time), startIdx + index);
+  });
+
+  const relevant = depthHistory.filter((snapshot) => {
+    const ts = Number(snapshot.timestamp) || 0;
+    return ts >= visibleStart && ts < visibleEnd;
+  });
+  if (relevant.length === 0) return;
+
+  let maxDepthSize = 0;
+  for (const snapshot of relevant) {
+    for (const bid of snapshot.bids || []) maxDepthSize = Math.max(maxDepthSize, Number(bid.size) || 0);
+    for (const ask of snapshot.asks || []) maxDepthSize = Math.max(maxDepthSize, Number(ask.size) || 0);
+  }
+  if (maxDepthSize <= 0) return;
+
+  for (const snapshot of relevant) {
+    const frameOpen = frameOpenTimeForTimeframe(Number(snapshot.timestamp), timeframe);
+    const candleIndex = candleIndexByOpen.get(frameOpen);
+    if (candleIndex == null) continue;
+
+    const frameMs = frameDurationMs(timeframe, frameOpen);
+    const progress = clamp((Number(snapshot.timestamp) - frameOpen) / frameMs, 0, 0.999);
+    const candleCenter = i2x(candleIndex);
+    const columnWidth = Math.max(1, Math.min(4, candleW / 10));
+    const left = candleCenter - candleW / 2 + progress * candleW;
+    const rowSize = Number(snapshot.row_size) || fallbackRowSize;
+
+    drawSnapshotHeatColumn(ctx, snapshot.bids || [], maxDepthSize, left, columnWidth, p2y, rowSize, chartH, false);
+    drawSnapshotHeatColumn(ctx, snapshot.asks || [], maxDepthSize, left, columnWidth, p2y, rowSize, chartH, true);
+  }
+}
+
+function drawSnapshotHeatColumn(ctx, levels, maxDepthSize, left, width, p2y, rowSize, chartH, isAsk) {
+  for (const level of levels) {
+    const rowTopY = p2y(level.price + rowSize);
+    const rowBottomY = p2y(level.price);
+    const rowTop = Math.min(rowTopY, rowBottomY);
+    const rowH = Math.max(1, Math.abs(rowBottomY - rowTopY) - 0.5);
+    if (rowTop > chartH || rowTop + rowH < 0) continue;
+
+    const intensity = Math.min((Number(level.size) || 0) / maxDepthSize, 1);
+    const alpha = 0.035 + intensity * 0.24;
+    ctx.fillStyle = isAsk ? `rgba(239,83,80,${alpha})` : `rgba(66,165,245,${alpha})`;
+    ctx.fillRect(left, rowTop, width, rowH);
   }
 }
 
