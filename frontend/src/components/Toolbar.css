@@ -1,0 +1,193 @@
+/* ── Toolbar ──────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+  padding: 0 6px;
+  gap: 2px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.tb-left, .tb-center, .tb-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tb-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+/* Buttons */
+.tb-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s;
+}
+.tb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.tb-btn--active {
+  background: var(--bg-active);
+  color: var(--text-bright);
+}
+.tb-btn--accent {
+  color: var(--accent);
+}
+.tb-btn--accent:hover {
+  color: var(--accent-hover);
+}
+.tb-btn--icon {
+  font-size: 13px;
+  padding: 3px 5px;
+}
+.tb-exchange {
+  color: var(--text-muted);
+}
+
+/* Feature tabs */
+.tb-tab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-family: inherit;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.12s;
+  position: relative;
+}
+.tb-tab:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.tb-tab--active {
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.1);
+}
+.tb-tab--active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 25%;
+  width: 50%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+/* Connection dot */
+.tb-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.tb-status-dot.on {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+.tb-status-dot.off {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+  animation: blink-dot 1s step-end infinite;
+}
+@keyframes blink-dot {
+  50% { opacity: 0.3; }
+}
+
+/* ── Dropdown ─────────────────────────────────────────── */
+.tb-dropdown {
+  position: relative;
+}
+
+.tb-dropdown-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s;
+}
+.tb-dropdown-btn:hover {
+  background: var(--bg-hover);
+}
+.tb-dropdown-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 2px;
+}
+.tb-dropdown-value {
+  color: var(--text-bright);
+}
+.tb-dropdown-arrow {
+  color: var(--text-muted);
+  font-size: 9px;
+  margin-left: 2px;
+}
+
+.tb-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  min-width: 160px;
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--bg-dropdown);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 4px 0;
+  z-index: 200;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+
+.tb-dropdown-menu--wide {
+  min-width: 200px;
+}
+
+.tb-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.tb-dropdown-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+.tb-dropdown-item.active {
+  background: var(--accent);
+  color: #fff;
+}

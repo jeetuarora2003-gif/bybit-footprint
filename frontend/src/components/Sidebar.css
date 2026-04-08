@@ -1,0 +1,56 @@
+/* ── Left sidebar ─────────────────────────────────────── */
+.sidebar {
+  width: 32px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+}
+
+.sb-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 8px;
+  font-family: inherit;
+  padding: 6px 2px;
+  cursor: pointer;
+  transition: all 0.12s;
+  position: relative;
+  border-left: 2px solid transparent;
+}
+
+.sb-item:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.sb-item--active {
+  color: var(--text-bright);
+  border-left-color: var(--accent);
+}
+
+.sb-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  margin-bottom: 1px;
+}
+
+.sb-label {
+  writing-mode: horizontal-tb;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.sb-toggle-arrow {
+  font-size: 6px;
+  color: var(--text-muted);
+}

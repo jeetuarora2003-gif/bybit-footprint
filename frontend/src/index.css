@@ -1,0 +1,82 @@
+/* ═══════════════════════════════════════════════════════
+   ExoCharts Clone — Design System
+   ═══════════════════════════════════════════════════════ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root {
+  /* Backgrounds */
+  --bg:             #0e1117;
+  --bg-surface:     #151921;
+  --bg-toolbar:     #1a1f2b;
+  --bg-dropdown:    #1e2433;
+  --bg-hover:       #252c3a;
+  --bg-active:      #2d3548;
+  --bg-sidebar:     #121620;
+
+  /* Borders */
+  --border:         #2a3040;
+  --border-light:   #353d50;
+
+  /* Text */
+  --text:           #d1d5db;
+  --text-bright:    #f0f2f5;
+  --text-dim:       #6b7280;
+  --text-muted:     #4b5563;
+
+  /* Accent */
+  --accent:         #3b82f6;
+  --accent-hover:   #60a5fa;
+
+  /* Candle & volume colors */
+  --green:          #26a69a;
+  --green-bright:   #4caf50;
+  --green-bar:      rgba(38,166,154,0.5);
+  --red:            #ef5350;
+  --red-bright:     #f44336;
+  --red-bar:        rgba(239,83,80,0.5);
+
+  /* POC */
+  --poc:            #ef5350;
+
+  /* Value Area */
+  --va-fill:        rgba(38,166,154,0.06);
+
+  /* Misc */
+  --yellow:         #ffab00;
+  --purple:         #7c4dff;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.mono {
+  font-family: "JetBrains Mono", "Cascadia Code", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

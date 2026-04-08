@@ -1,0 +1,318 @@
+Bybit’s V5 `publicTrade.BTCUSDT` stream sends an envelope with a `data` array of trade objects; each trade has an `S` field indicating the taker side: `"Buy"` = taker buy, `"Sell"` = taker sell, which you can use directly to compute Volume Delta. [bybit-exchange.github](https://bybit-exchange.github.io/docs/v5/websocket/public/trade)
+
+## WebSocket endpoint and subscription
+
+For linear (USDT perpetual) contracts like `BTCUSDT`, you connect to the public linear market data stream and subscribe to the `publicTrade` topic: [github](https://github.com/bmoscon/cryptofeed/issues/1075)
+
+```json
+// WebSocket URL (mainnet)
+wss://stream.bybit.com/v5/public/linear
+
+// Subscription frame
+{
+  "op": "subscribe",
+  "args": [
+    "publicTrade.BTCUSDT"
+  ]
+}
+```
+
+Once subscribed, Bybit pushes trade updates in real time.
+
+## Envelope JSON structure
+
+Each push is a JSON object with a standard envelope and a `data` array containing one or more trades. [igotit.tistory](https://igotit.tistory.com/entry/bybit-API-V5-%EC%9B%B9%EC%86%8C%EC%BC%93-Trade-%EC%8B%A4%EC%8B%9C%EA%B0%84-%EC%8B%9C%EC%84%B8-%EC%88%98%EC%8B%A0)
+
+```json
+{
+  "id": "some-id-optional",
+  "topic": "publicTrade.BTCUSDT",
+  "type": "snapshot",
+  "ts": 1672304486868,
+  "data": [
+    {
+      "T": 1672304486865,
+      "s": "BTCUSDT",
+      "S": "Buy",
+      "v": "0.001",
+      "p": "16578.50",
+      "L": "PlusTick",
+      "i": "20f43950-d8dd-5b31-9112-a178eb6023af",
+      "BT": false,
+      "seq": 1783284617
+    }
+  ]
+}
+```
+
+Key envelope fields: [bybit-exchange.github](https://bybit-exchange.github.io/docs/v5/websocket/public/trade)
+
+- `id` (string, optional): Message ID (mainly for options).  
+- `topic` (string): Topic name, here `publicTrade.BTCUSDT`.  
+- `type` (string): Data type (e.g., `"snapshot"` or `"delta"` depending on context).  
+- `ts` (number): Server timestamp (ms) when this message was generated.  
+- `data` (array): List of trade objects, sorted by match time ascending.
+
+## Trade object fields
+
+Each entry in `data` is a single matched trade with the following structure (futures/linear/spot all follow the same basic schema in V5): [pkg.go](https://pkg.go.dev/github.com/c9s/bbgo/pkg/exchange/bybit)
+
+- `T` (number): Execution timestamp in ms (matching engine time).  
+- `s` (string): Symbol, e.g. `"BTCUSDT"`.  
+- `S` (string): **Side of taker**, either `"Buy"` or `"Sell"`.  
+- `v` (string): Trade size (quantity) as a string.  
+- `p` (string): Trade price as a string.  
+- `L` (string): Direction of price change relative to previous trade, e.g. `"PlusTick"`, `"MinusTick"`, `"ZeroPlusTick"`, etc. (futures/linear specific). [bybit-exchange.github](https://bybit-exchange.github.io/docs/v5/websocket/public/trade)
+- `i` (string): Trade ID.  
+- `BT` (bool): `true` if this was a block trade, otherwise `false`. [igotit.tistory](https://igotit.tistory.com/entry/bybit-API-V5-%EC%9B%B9%EC%86%8C%EC%BC%93-Trade-%EC%8B%A4%EC%8B%9C%EA%B0%84-%EC%8B%9C%EC%84%B8-%EC%88%98%EC%8B%A0)
+- `seq` (number): Sequence number for ordering (present on perps/futures streams). [bybit-exchange.github](https://bybit-exchange.github.io/docs/v5/websocket/public/trade)
+
+The crucial field for Volume Delta is `S`, which always refers to the **aggressor (taker) direction**, not the maker.
+
+## Identifying taker buy vs taker sell
+
+Bybit defines `S` as “Side of taker”, with allowed values `[ "Buy", "Sell" ]`. [pkg.go](https://pkg.go.dev/github.com/c9s/bbgo/pkg/exchange/bybit)
+
+- If `S == "Buy"`:  
+  - The taker is buying, hitting resting sell liquidity (aggressive buy).  
+  - Count this trade’s volume as **taker buy volume**.
+
+- If `S == "Sell"`:  
+  - The taker is selling, hitting resting buy liquidity (aggressive sell).  
+  - Count this trade’s volume as **taker sell volume**.
+
+Example frame with both sides:
+
+```json
+{
+  "topic": "publicTrade.BTCUSDT",
+  "type": "snapshot",
+  "ts": 1672304486868,
+  "data": [
+    {
+      "T": 1672304486865,
+      "s": "BTCUSDT",
+      "S": "Buy",
+      "v": "0.003",
+      "p": "16578.50",
+      "L": "PlusTick",
+      "i": "trade-id-1",
+      "BT": false,
+      "seq": 1783284617
+    },
+    {
+      "T": 1672304486866,
+      "s": "BTCUSDT",
+      "S": "Sell",
+      "v": "0.002",
+      "p": "16578.00",
+      "L": "MinusTick",
+      "i": "trade-id-2",
+      "BT": false,
+      "seq": 1783284618
+    }
+  ]
+}
+```
+
+Here: [igotit.tistory](https://igotit.tistory.com/entry/bybit-API-V5-%EC%9B%B9%EC%86%8C%EC%BC%93-Trade-%EC%8B%A4%EC%8B%9C%EA%B0%84-%EC%8B%9C%EC%84%B8-%EC%88%98%EC%8B%A0)
+
+- First trade is a taker buy of `0.003`.  
+- Second trade is a taker sell of `0.002`.
+
+## Computing Volume Delta from the stream
+
+A typical Volume Delta definition is:
+
+\[
+\text{Volume Delta} = \sum(\text{taker buy volume}) - \sum(\text{taker sell volume})
+\]
+
+From the Bybit V5 `publicTrade` stream you can implement this directly using `S` and `v`: [igotit.tistory](https://igotit.tistory.com/entry/bybit-API-V5-%EC%9B%B9%EC%86%8C%EC%BC%93-Trade-%EC%8B%A4%EC%8B%9C%EA%B0%84-%EC%8B%9C%EC%84%B8-%EC%88%98%EC%8B%A0)
+
+```js
+function handleMessage(msg) {
+  if (msg.topic !== 'publicTrade.BTCUSDT') return;
+
+  for (const trade of msg.data) {
+    const volume = parseFloat(trade.v);   // trade size
+
+    if (trade.S === 'Buy') {
+      // taker buy
+      buyVolume  += volume;
+      volumeDelta += volume;   // +volume
+    } else if (trade.S === 'Sell') {
+      // taker sell
+      sellVolume += volume;
+      volumeDelta -= volume;   // -volume
+    }
+  }
+}
+```
+
+If you prefer Volume Delta in quote currency (USDT) instead of contracts/coin size, multiply by price per trade: `volumeQuote = parseFloat(trade.v) * parseFloat(trade.p)`, then apply the same sign logic using `S`. [bybit-exchange.github](https://bybit-exchange.github.io/docs/v5/websocket/public/trade)
+
+A footprint chart takes all the individual trades (“ticks”) inside a bar (for example, a 1‑minute candle) and groups them by price level; for each price, it stores per‑price statistics such as bid volume, ask volume, and delta. You can build this by mapping each tick to a price bucket and accumulating its volume into a per‑price “volume‑at‑price” structure for that bar. [alchemymarkets](https://alchemymarkets.com/education/guides/volume-footprint-chart/)
+
+## Core math behind a footprint
+
+Within a single bar (e.g., between \(t_0\) and \(t_0 + 60\) seconds), you have a set of trades \(\{(p_i, v_i, s_i)\}\), where \(p_i\) is price, \(v_i\) is volume, and \(s_i\) encodes direction (taker buy/taker sell).  
+
+For each price level \(P\), you accumulate: [in.tradingview](https://in.tradingview.com/support/solutions/43000726164-volume-footprint-charts-a-complete-guide/)
+
+- \(V_{\text{buy}}(P) = \sum v_i\) for all trades at price \(p_i = P\) where \(s_i = \text{Buy}\).  
+- \(V_{\text{sell}}(P) = \sum v_i\) for all trades at price \(p_i = P\) where \(s_i = \text{Sell}\).  
+- Per‑price delta: \(\Delta(P) = V_{\text{buy}}(P) - V_{\text{sell}}(P)\). [gocharting](https://gocharting.com/docs/orderflow/delta-and-cumulative-delta-bars)
+
+Graphically, footprint platforms then render, for each price row in the bar, something like:  
+
+- `sell_volume x buy_volume`  
+- or `delta` or `total = buy + sell`. [litefinance](https://www.litefinance.org/blog/for-beginners/trading-strategies/order-flow-trading-with-footprint-charts/)
+
+## Price-level bucketing (ticks per price)
+
+You need to define how you discretize prices into “buckets” (also called rows or ticks‑per‑row). [trading-strategies](https://trading-strategies.academy/archives/2664)
+
+Common choices:
+
+- 1 price tick per row: each bucket corresponds exactly to one exchange tick size (e.g. 0.5, 0.1, 0.01).  
+- N ticks per row: 2–4 ticks per bucket for a more compact footprint. [trading-strategies](https://trading-strategies.academy/archives/2664)
+
+Given:
+
+- `tickSize` = minimum price increment (e.g. 0.5).  
+- `ticksPerRow` = how many ticks per footprint row (e.g. 1 or 2).  
+
+Define `rowSize = tickSize * ticksPerRow`.  
+Then the bucket index for a price `p` can be computed as, for example:
+
+\[
+\text{rowIndex} = \left\lfloor \frac{p}{\text{rowSize}} \right\rfloor
+\]
+
+and the canonical bucket price (for display) as:
+
+\[
+P_{\text{row}} = \text{rowIndex} \times \text{rowSize}
+\]
+
+In practice you may anchor to `lowOfBar` instead of 0, but the logic is the same.
+
+## Aggregating raw ticks into a 1‑minute candle
+
+Steps for one 1‑minute candle:
+
+1. Filter all trades with `t` in `[t0, t0+60s)`.  
+2. For each trade, classify its direction (`Buy` vs `Sell`) using taker side or bid/ask comparison (as you did with Bybit’s `S` field). [kite](https://kite.trade/forum/discussion/13170/understanding-volume-in-tick-level-data)
+3. Compute the bucket index from `price` and update your `VolumeAtPrice` structure.  
+4. After processing all trades, you have, for that candle, a map from bucket price to `{buyVolume, sellVolume, delta, totalVolume}`.
+
+This is identical in spirit to a “volume profile” for a single bar (instead of over a whole session). [tradethepool](https://tradethepool.com/fundamental/mastering-footprint-charts-trading/)
+
+## Pseudo-code: volume-at-price array
+
+Below is language‑agnostic pseudo‑code for computing a volume‑at‑price array for a single 1‑minute bar.
+
+Assume each tick has:
+
+- `tick.price` (float)  
+- `tick.volume` (float)  
+- `tick.side` in `{ "Buy", "Sell" }` (taker side)  
+
+And you know:
+
+- `tickSize` (e.g. 0.5)  
+- `ticksPerRow` (e.g. 1)  
+
+```pseudo
+struct VolumeAtPrice {
+    price       // canonical bucket price (e.g. 60000.0)
+    buyVolume   // total volume executed as taker buy at this price
+    sellVolume  // total volume executed as taker sell at this price
+    delta       // buyVolume - sellVolume
+    totalVolume // buyVolume + sellVolume
+}
+
+// Input: list of ticks for this 1-minute candle
+function buildFootprint(ticks, tickSize, ticksPerRow):
+    rowSize = tickSize * ticksPerRow
+
+    // map: bucketPrice -> VolumeAtPrice
+    mapVAP = empty map
+
+    for tick in ticks:
+        // 1) find bucket index and canonical bucket price
+        rowIndex    = floor(tick.price / rowSize)
+        bucketPrice = rowIndex * rowSize
+
+        // 2) get or create accumulator
+        if bucketPrice not in mapVAP:
+            vap = new VolumeAtPrice
+            vap.price       = bucketPrice
+            vap.buyVolume   = 0
+            vap.sellVolume  = 0
+            vap.delta       = 0
+            vap.totalVolume = 0
+            mapVAP[bucketPrice] = vap
+        else:
+            vap = mapVAP[bucketPrice]
+
+        // 3) accumulate by side
+        vol = tick.volume
+
+        if tick.side == "Buy":
+            vap.buyVolume   += vol
+        else if tick.side == "Sell":
+            vap.sellVolume  += vol
+
+        // 4) update derived fields
+        vap.totalVolume = vap.buyVolume + vap.sellVolume
+        vap.delta       = vap.buyVolume - vap.sellVolume
+
+    // 5) convert map to sorted array (for rendering top-to-bottom)
+    result = values(mapVAP)
+    sort result by price ascending
+
+    return result
+```
+
+A possible `Volume-at-Price` array for a candle might look like:
+
+```pseudo
+[
+  { price: 59999.5, buyVolume: 3.2, sellVolume: 1.0, totalVolume: 4.2, delta: 2.2 },
+  { price: 60000.0, buyVolume: 5.0, sellVolume: 7.5, totalVolume: 12.5, delta: -2.5 },
+  { price: 60000.5, buyVolume: 1.1, sellVolume: 0.2, totalVolume: 1.3, delta: 0.9 },
+  ...
+]
+```
+
+Your renderer would then draw one bar (the 1‑minute candle), and for each `price` row in this array, display:
+
+- Either `sellVolume x buyVolume` on left/right of the bar.  
+- Or just `totalVolume` or `delta`, depending on the footprint mode (“Buy & Sell”, “Delta”, “Total”) as TradingView and others define. [in.tradingview](https://in.tradingview.com/support/solutions/43000726164-volume-footprint-charts-a-complete-guide/)
+
+## Notes for real implementations
+
+- If your data has only total volume but not direction, you can estimate side using bid/ask comparison (e.g., classify trade as buy if it trades at or above the ask, sell if at or below the bid). [kite](https://kite.trade/forum/discussion/13170/understanding-volume-in-tick-level-data)
+- For more control, you can pre‑compute bar‑level statistics (bar delta, bar total) by summing \(\Delta(P)\) and total volume across all price buckets of the bar. [litefinance](https://www.litefinance.org/blog/for-beginners/trading-strategies/order-flow-trading-with-footprint-charts/)
+- You can reuse the same logic on longer timeframes by merging multiple consecutive 1‑minute tick ranges into a higher‑timeframe footprint.
+
+---
+## Expected Output Shape (backend -> frontend via ws://localhost:8080)
+
+The Go backend must broadcast this JSON every 500ms for the current active candle:
+
+{
+  "candle_open_time": 1672304460000,
+  "open":  16575.00,
+  "high":  16580.00,
+  "low":   16573.50,
+  "close": 16578.50,
+  "clusters": [
+    { "price": 16573.5, "buyVol": 1.2, "sellVol": 3.4, "delta": -2.2, "totalVol": 4.6 },
+    { "price": 16574.0, "buyVol": 5.0, "sellVol": 2.1, "delta":  2.9, "totalVol": 7.1 }
+  ],
+  "candle_delta": 3.2,
+  "cvd": 45.7
+}
