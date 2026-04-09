@@ -1,5 +1,3 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import "./Toolbar.css";
 import { MODE_PRESETS } from "./chart/modeRules";
 
@@ -73,91 +71,22 @@ const FEATURE_TABS = [
   { key: "vwap", label: "VWAP", supported: true },
 ];
 
-function Dropdown({ label, value, options, onChange, wide }) {
-  const [open, setOpen] = useState(false);
-  const [menuStyle, setMenuStyle] = useState(null);
-  const ref = useRef(null);
-  const buttonRef = useRef(null);
-
-  useEffect(() => {
-    const handler = (event) => {
-      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    const updatePosition = () => {
-      const button = buttonRef.current;
-      if (!button) return;
-
-      const rect = button.getBoundingClientRect();
-      const minWidth = wide ? 200 : 160;
-      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-      const left = Math.max(8, Math.min(rect.left, viewportWidth - minWidth - 8));
-      const top = rect.bottom + 2;
-      const maxHeight = Math.max(180, viewportHeight - top - 12);
-
-      setMenuStyle({
-        position: "fixed",
-        left,
-        top,
-        minWidth,
-        maxHeight,
-      });
-    };
-
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open, wide]);
-
-  const current = options.find((option) => option.value === value);
-
+function SelectField({ label, value, options, onChange }) {
   return (
-    <div className="tb-dropdown" ref={ref}>
-      <button
-        type="button"
-        ref={buttonRef}
-        className="tb-dropdown-btn"
-        onClick={() => setOpen((prev) => !prev)}
+    <label className="tb-select">
+      {label && <span className="tb-select-label">{label}</span>}
+      <select
+        className="tb-select-input"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
       >
-        {label && <span className="tb-dropdown-label">{label}</span>}
-        <span className="tb-dropdown-value">{current?.label ?? value}</span>
-        <span className="tb-dropdown-arrow">v</span>
-      </button>
-      {open && menuStyle && createPortal(
-        <div
-          className={`tb-dropdown-menu${wide ? " tb-dropdown-menu--wide" : ""}`}
-          style={menuStyle}
-        >
-          {options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`tb-dropdown-item${option.value === value ? " active" : ""}`}
-              onClick={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </div>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -211,39 +140,39 @@ export default function Toolbar({
         </button>
         <div className="tb-sep" />
 
-        <Dropdown
+        <SelectField
           value={settings.timeframe || "1m"}
           options={TIMEFRAMES}
           onChange={(value) => updateSetting("timeframe", value)}
         />
         <div className="tb-sep" />
 
-        <Dropdown
+        <SelectField
           value={settings.tickSize || "1"}
           options={tickOptions.length ? tickOptions : TICK_SIZES}
           onChange={(value) => updateSetting("tickSize", value)}
         />
         <div className="tb-sep" />
 
-        <Dropdown
+        <SelectField
           label="Cluster"
           value={settings.clusterMode}
           options={CLUSTER_MODES}
           onChange={applyClusterMode}
         />
-        <Dropdown
+        <SelectField
           label="Shading"
           value={settings.shadingMode || "current"}
           options={SHADING_MODES}
           onChange={(value) => updateSetting("shadingMode", value)}
         />
-        <Dropdown
+        <SelectField
           label="Text"
           value={settings.dataView}
           options={DATA_VIEWS}
           onChange={(value) => updateSetting("dataView", value)}
         />
-        <Dropdown
+        <SelectField
           label="Candle"
           value={settings.candleStyle}
           options={CANDLE_STYLES}

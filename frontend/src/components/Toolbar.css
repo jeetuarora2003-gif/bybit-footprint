@@ -147,16 +147,22 @@
 }
 
 /* ── Dropdown ─────────────────────────────────────────── */
-.tb-dropdown {
-  position: relative;
-}
-
-.tb-dropdown-btn {
+.tb-select {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+
+.tb-select-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 2px;
+}
+
+.tb-select-input {
   background: none;
-  border: none;
+  border: 1px solid transparent;
   color: var(--text);
   font-size: 11px;
   font-family: inherit;
@@ -165,61 +171,15 @@
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.12s;
+  appearance: auto;
+  min-width: 0;
 }
-.tb-dropdown-btn:hover {
+.tb-select-input:hover {
   background: var(--bg-hover);
 }
-.tb-dropdown-label {
-  color: var(--text-muted);
-  font-size: 10px;
-  margin-right: 2px;
-}
-.tb-dropdown-value {
-  color: var(--text-bright);
-}
-.tb-dropdown-arrow {
-  color: var(--text-muted);
-  font-size: 9px;
-  margin-left: 2px;
-}
 
-.tb-dropdown-menu {
-  position: fixed;
-  top: calc(100% + 2px);
-  left: 0;
-  min-width: 160px;
-  max-height: 340px;
-  overflow-y: auto;
-  background: var(--bg-dropdown);
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  padding: 4px 0;
-  z-index: 1000;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
-}
-
-.tb-dropdown-menu--wide {
-  min-width: 200px;
-}
-
-.tb-dropdown-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--text);
-  font-size: 11px;
-  font-family: inherit;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: all 0.1s;
-}
-.tb-dropdown-item:hover {
+.tb-select-input:focus {
+  outline: none;
+  border-color: var(--accent);
   background: var(--bg-hover);
-  color: var(--text-bright);
-}
-.tb-dropdown-item.active {
-  background: var(--accent);
-  color: #fff;
 }
