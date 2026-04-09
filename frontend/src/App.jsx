@@ -127,8 +127,8 @@ export default function App() {
   };
   const infoCandle = crosshairData ?? liveCandle;
   const readingContext = useMemo(
-    () => buildSimpleReadingContext(allCandles, infoCandle),
-    [allCandles, infoCandle],
+    () => buildSimpleReadingContext(allCandles, infoCandle, resolvedSettings.timeframe),
+    [allCandles, infoCandle, resolvedSettings.timeframe],
   );
   const chartAnnotations = useMemo(() => {
     if (!allCandles.length) return [];
@@ -136,7 +136,7 @@ export default function App() {
     const annotations = [];
     for (let index = start; index < allCandles.length; index += 1) {
       const candle = allCandles[index];
-      const context = buildSimpleReadingContext(allCandles, candle);
+      const context = buildSimpleReadingContext(allCandles, candle, resolvedSettings.timeframe);
       const reading = buildOrderflowReading(candle, context);
       if (!reading?.setup) continue;
       const minimumScore = 7;
@@ -152,7 +152,7 @@ export default function App() {
       });
     }
     return annotations.slice(-48);
-  }, [allCandles]);
+  }, [allCandles, resolvedSettings.timeframe]);
 
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
@@ -267,7 +267,7 @@ export default function App() {
   );
 }
 
-function buildSimpleReadingContext(allCandles, activeCandle) {
+function buildSimpleReadingContext(allCandles, activeCandle, timeframe = "1m") {
   if (!activeCandle?.candle_open_time || allCandles.length === 0) {
     return {
       previousCandle: null,
@@ -289,12 +289,34 @@ function buildSimpleReadingContext(allCandles, activeCandle) {
     index = allCandles.length - 1;
   }
 
+  const { recentCount, futureCount } = getAdaptiveReadingWindow(timeframe);
+
   return {
     previousCandle: index > 0 ? allCandles[index - 1] : null,
     nextCandle: index + 1 < allCandles.length ? allCandles[index + 1] : null,
-    recentCandles: allCandles.slice(Math.max(0, index - 8), index),
-    futureCandles: allCandles.slice(index + 1, index + 3),
+    recentCandles: allCandles.slice(Math.max(0, index - recentCount), index),
+    futureCandles: allCandles.slice(index + 1, index + 1 + futureCount),
   };
+}
+
+function getAdaptiveReadingWindow(timeframe) {
+  switch (timeframe) {
+    case "1m":
+      return { recentCount: 10, futureCount: 3 };
+    case "2m":
+    case "3m":
+      return { recentCount: 9, futureCount: 3 };
+    case "5m":
+      return { recentCount: 8, futureCount: 3 };
+    case "10m":
+      return { recentCount: 6, futureCount: 2 };
+    case "15m":
+      return { recentCount: 5, futureCount: 2 };
+    case "30m":
+      return { recentCount: 4, futureCount: 2 };
+    default:
+      return { recentCount: 8, futureCount: 2 };
+  }
 }
 
 function loadPersistedSettings() {
