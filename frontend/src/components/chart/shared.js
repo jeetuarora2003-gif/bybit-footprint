@@ -35,15 +35,6 @@ export const CHART_TF_MS = {
   "10m": 600000,
   "15m": 900000,
   "30m": 1800000,
-  "1h": 3600000,
-  "2h": 7200000,
-  "4h": 14400000,
-  "6h": 21600000,
-  "8h": 28800000,
-  "12h": 43200000,
-  D: 86400000,
-  W: 604800000,
-  M: 2592000000,
 };
 
 export function getRowSize(settings) {
@@ -52,32 +43,11 @@ export function getRowSize(settings) {
   return baseSize * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
 }
 
-export function frameDurationMs(timeframe, frameOpen) {
-  if (timeframe === "M") {
-    const date = new Date(frameOpen);
-    const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
-    return next - frameOpen;
-  }
+export function frameDurationMs(timeframe) {
   return CHART_TF_MS[timeframe] ?? CHART_TF_MS["1m"];
 }
 
 export function frameOpenTimeForTimeframe(timestamp, timeframe) {
-  const date = new Date(timestamp);
-
-  if (timeframe === "D") {
-    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  }
-
-  if (timeframe === "W") {
-    const day = date.getUTCDay();
-    const diffToMonday = (day + 6) % 7;
-    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - diffToMonday);
-  }
-
-  if (timeframe === "M") {
-    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
-  }
-
   const tfMs = frameDurationMs(timeframe, timestamp);
   return timestamp - (timestamp % tfMs);
 }

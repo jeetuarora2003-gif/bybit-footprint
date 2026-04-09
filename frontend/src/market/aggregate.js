@@ -4,8 +4,6 @@ const BASE_ROW_SIZE = 0.1;
 
 const SUPPORTED_TIMEFRAMES = new Set([
   "1m", "2m", "3m", "5m", "10m", "15m", "30m",
-  "1h", "2h", "4h", "6h", "8h", "12h",
-  "D", "W", "M",
 ]);
 
 export function round6(value) {
@@ -25,7 +23,7 @@ export function aggregatedRowSize(tickMultiplier, baseRowSize = BASE_ROW_SIZE) {
   return round6((Number(baseRowSize) || BASE_ROW_SIZE) * parseTickMultiplier(tickMultiplier));
 }
 
-export function timeframeDurationMs(timeframe, referenceTs) {
+export function timeframeDurationMs(timeframe) {
   switch (timeframe) {
     case "1m":
       return 60_000;
@@ -41,27 +39,6 @@ export function timeframeDurationMs(timeframe, referenceTs) {
       return 900_000;
     case "30m":
       return 1_800_000;
-    case "1h":
-      return 3_600_000;
-    case "2h":
-      return 7_200_000;
-    case "4h":
-      return 14_400_000;
-    case "6h":
-      return 21_600_000;
-    case "8h":
-      return 28_800_000;
-    case "12h":
-      return 43_200_000;
-    case "D":
-      return 86_400_000;
-    case "W":
-      return 604_800_000;
-    case "M": {
-      const date = new Date(referenceTs);
-      const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
-      return next - frameOpenTime(referenceTs, timeframe);
-    }
     default:
       return 60_000;
   }
@@ -69,22 +46,8 @@ export function timeframeDurationMs(timeframe, referenceTs) {
 
 export function frameOpenTime(timestamp, timeframe) {
   const normalized = normalizeTimeframe(timeframe);
-  const date = new Date(timestamp);
-
-  switch (normalized) {
-    case "D":
-      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-    case "W": {
-      const diffToMonday = (date.getUTCDay() + 6) % 7;
-      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - diffToMonday);
-    }
-    case "M":
-      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
-    default: {
-      const tfMs = timeframeDurationMs(normalized, timestamp);
-      return timestamp - (timestamp % tfMs);
-    }
-  }
+  const tfMs = timeframeDurationMs(normalized, timestamp);
+  return timestamp - (timestamp % tfMs);
 }
 
 function copyBookLevels(levels) {

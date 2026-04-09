@@ -42,15 +42,6 @@ const TIMEFRAMES = [
   { value: "10m", label: "10 minutes" },
   { value: "15m", label: "15 minutes" },
   { value: "30m", label: "30 minutes" },
-  { value: "1h", label: "1 hour" },
-  { value: "2h", label: "2 hours" },
-  { value: "4h", label: "4 hours" },
-  { value: "6h", label: "6 hours" },
-  { value: "8h", label: "8 hours" },
-  { value: "12h", label: "12 hours" },
-  { value: "D", label: "Daily" },
-  { value: "W", label: "Weekly" },
-  { value: "M", label: "Monthly" },
 ];
 
 const TICK_SIZES = [
@@ -65,38 +56,6 @@ const TICK_SIZES = [
 const SHADING_MODES = [
   { value: "current", label: "Current Rotation" },
   { value: "adaptive", label: "Adaptive" },
-];
-
-const PROFILE_STUDIES = [
-  { value: "visible", label: "Visible Profile" },
-  { value: "session", label: "Session Profile" },
-  { value: "composite", label: "Composite Profile" },
-];
-
-const SESSION_MODES = [
-  { value: "utcDay", label: "UTC Day" },
-  { value: "asia", label: "Asia" },
-  { value: "london", label: "London" },
-  { value: "newyork", label: "New York" },
-];
-
-const SCORING_PRESETS = [
-  { value: "aggressive", label: "Aggressive" },
-  { value: "balanced", label: "Balanced" },
-  { value: "strict", label: "Strict" },
-];
-
-const SESSION_FILTERS = [
-  { value: "off", label: "Off" },
-  { value: "balanced", label: "Balanced" },
-  { value: "strict", label: "Strict" },
-];
-
-const CALLOUT_GRADES = [
-  { value: "A", label: "A only" },
-  { value: "B", label: "B+" },
-  { value: "C", label: "C+" },
-  { value: "D", label: "All" },
 ];
 
 const FEATURE_TABS = [
@@ -242,37 +201,6 @@ export default function Toolbar({
           options={CANDLE_STYLES}
           onChange={(value) => updateSetting("candleStyle", value)}
         />
-        <Dropdown
-          label="Profile"
-          value={settings.profileStudy || "visible"}
-          options={PROFILE_STUDIES}
-          onChange={(value) => updateSetting("profileStudy", value)}
-          wide
-        />
-        <Dropdown
-          label="Session"
-          value={settings.sessionMode || "utcDay"}
-          options={SESSION_MODES}
-          onChange={(value) => updateSetting("sessionMode", value)}
-        />
-        <Dropdown
-          label="Score"
-          value={settings.scoringPreset || "balanced"}
-          options={SCORING_PRESETS}
-          onChange={(value) => updateSetting("scoringPreset", value)}
-        />
-        <Dropdown
-          label="Filter"
-          value={settings.sessionFilter || "balanced"}
-          options={SESSION_FILTERS}
-          onChange={(value) => updateSetting("sessionFilter", value)}
-        />
-        <Dropdown
-          label="Callouts"
-          value={settings.calloutGrade || "B"}
-          options={CALLOUT_GRADES}
-          onChange={(value) => updateSetting("calloutGrade", value)}
-        />
       </div>
 
       <div className="tb-center">
@@ -316,12 +244,6 @@ export default function Toolbar({
           onClick={() => updateSetting("showCallouts", !settings.showCallouts)}
         >
           Notes
-        </button>
-        <button
-          className={`tb-tab${settings.showSessionLevels ? " tb-tab--active" : ""}`}
-          onClick={() => updateSetting("showSessionLevels", !settings.showSessionLevels)}
-        >
-          Levels
         </button>
       </div>
 

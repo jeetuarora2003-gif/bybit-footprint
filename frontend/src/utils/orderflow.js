@@ -113,7 +113,6 @@ function normalizeReadingContext(context) {
       nextCandle: null,
       recentCandles: [],
       futureCandles: [],
-      market: null,
     }
   }
 
@@ -123,7 +122,6 @@ function normalizeReadingContext(context) {
       nextCandle: null,
       recentCandles: [],
       futureCandles: [],
-      market: null,
     }
   }
 
@@ -136,7 +134,6 @@ function normalizeReadingContext(context) {
     nextCandle: context.nextCandle || futureCandles[0] || null,
     recentCandles: Array.isArray(context.recentCandles) ? context.recentCandles.filter(Boolean) : [],
     futureCandles,
-    market: context.market || null,
   }
 }
 
@@ -207,7 +204,7 @@ function summarizeParticipation(candle, previousCandle, reliable) {
       oiState,
       row,
       headline: "Short covering is lifting price",
-      detail: `Price rose with supportive ${flowLabel.toLowerCase()}, but open interest fell. That usually means shorts are closing rather than new longs building aggressively.`,
+      detail: `Price rose with constructive ${flowLabel.toLowerCase()}, but open interest fell. That usually means shorts are closing rather than new longs building aggressively.`,
       shortDetail: "Price is rising on covering, which can fade faster than fresh long initiation.",
       chips: [`${flowLabel} up`, "OI down", "Short covering"],
     }
@@ -388,11 +385,11 @@ function summarizeLiquidity(candle) {
   if (bidToAskRatio >= 1.35 && nearBidWall) {
     const price = formatLevelPrice(largestBid.price, rowSize)
     return {
-      kind: "bid_support",
-      headline: "Bid support sits just below price",
-      detail: `Visible bid liquidity is heavier than the ask side and the biggest bid wall is parked near ${price}. That can support price until it is pulled or cleanly traded through.`,
-      shortDetail: "Visible bid liquidity is stacked below price.",
-      chips: ["Bid support"],
+      kind: "bid_cushion",
+      headline: "Heavy bids are sitting just below price",
+      detail: `Visible bid liquidity is heavier than the ask side and the biggest bid wall is parked near ${price}. That gives buyers a nearby cushion until the orders are pulled or traded through.`,
+      shortDetail: "Heavy bids are stacked just below price.",
+      chips: ["Bid cushion"],
       bias: 1,
       row: "Bid liquidity is heavier below price",
     }
@@ -401,11 +398,11 @@ function summarizeLiquidity(candle) {
   if (bidToAskRatio <= 0.74 && nearAskWall) {
     const price = formatLevelPrice(largestAsk.price, rowSize)
     return {
-      kind: "ask_resistance",
-      headline: "Ask liquidity is capping the move overhead",
-      detail: `Visible ask liquidity outweighs the bid side and the biggest offer sits near ${price}. That can cap price until buyers chew through it or the wall gets pulled.`,
-      shortDetail: "A visible offer wall sits just above price.",
-      chips: ["Ask wall"],
+      kind: "ask_pressure",
+      headline: "Heavy offers are sitting just above price",
+      detail: `Visible ask liquidity outweighs the bid side and the biggest offer sits near ${price}. That overhead supply can slow or cap the move until buyers chew through it or the wall gets pulled.`,
+      shortDetail: "A visible offer wall is sitting just above price.",
+      chips: ["Ask pressure"],
       bias: -1,
       row: "Ask liquidity is heavier above price",
     }
@@ -415,7 +412,7 @@ function summarizeLiquidity(candle) {
     return {
       kind: "book_bid_heavy",
       headline: "The visible book leans bid",
-      detail: "Visible resting liquidity is heavier on the bid side, which gives buyers a nearby support edge, but the wall is not concentrated right on top of price yet.",
+      detail: "Visible resting liquidity is heavier on the bid side, which gives buyers a nearby cushioning edge, but the wall is not concentrated right on top of price yet.",
       shortDetail: "The visible book leans bid.",
       chips: ["Book bid-heavy"],
       bias: 1,
@@ -427,7 +424,7 @@ function summarizeLiquidity(candle) {
     return {
       kind: "book_ask_heavy",
       headline: "The visible book leans ask",
-      detail: "Visible resting liquidity is heavier on the ask side, which gives sellers an overhead resistance edge, but the wall is not concentrated right on top of price yet.",
+      detail: "Visible resting liquidity is heavier on the ask side, which gives sellers an overhead supply edge, but the wall is not concentrated right on top of price yet.",
       shortDetail: "The visible book leans ask.",
       chips: ["Book ask-heavy"],
       bias: -1,
@@ -466,36 +463,23 @@ function describeDataQuality(candle, reliable) {
   return "History-only bar. Wait for live capture or replay for full orderflow context."
 }
 
-function buildLocationContext(candle, recentCandles, market) {
+function buildLocationContext(candle, recentCandles) {
   const currentHigh = Number(candle?.high) || 0
   const currentLow = Number(candle?.low) || 0
   const currentClose = Number(candle?.close) || 0
   const step = Math.max(Number(candle?.row_size) || 0.1, 0.1)
-  const session = market?.session || null
-  const selectedProfile = market?.profile?.selected || null
-  const nearbyLevels = Array.isArray(market?.nearbyLevels) ? market.nearbyLevels : []
-
-  const isNearLevel = (price, ticks = 2) => {
-    const numeric = Number(price)
-    if (!Number.isFinite(numeric) || numeric <= 0) return false
-    return Math.abs(currentClose - numeric) <= step * ticks
-      || Math.abs(currentHigh - numeric) <= step * ticks
-      || Math.abs(currentLow - numeric) <= step * ticks
-  }
 
   if (!recentCandles.length) {
     return {
-      hasContext: nearbyLevels.length > 0 || Boolean(session || selectedProfile),
+      hasContext: false,
       step,
       referenceHigh: currentHigh,
       referenceLow: currentLow,
       rangeMid: (currentHigh + currentLow) / 2,
-      nearHigh: isNearLevel(session?.sessionHigh) || isNearLevel(session?.priorHigh) || isNearLevel(session?.openingRangeHigh) || isNearLevel(selectedProfile?.vah),
-      nearLow: isNearLevel(session?.sessionLow) || isNearLevel(session?.priorLow) || isNearLevel(session?.openingRangeLow) || isNearLevel(selectedProfile?.val),
+      nearHigh: false,
+      nearLow: false,
       sweptHigh: false,
       sweptLow: false,
-      profileNearPOC: isNearLevel(selectedProfile?.poc, 3),
-      nearbyLevels,
       volumeSpike: false,
       averageVolume: Number(candle?.total_volume) || 0,
     }
@@ -508,25 +492,17 @@ function buildLocationContext(candle, recentCandles, market) {
   const referenceLow = lows.length ? Math.min(...lows) : currentLow
   const averageVolume = average(volumes) || Number(candle?.total_volume) || 0
   const rangeMid = (referenceHigh + referenceLow) / 2
-  const derivedNearHigh = currentHigh >= referenceHigh - step * 1.5
-  const derivedNearLow = currentLow <= referenceLow + step * 1.5
-  const profileNearHigh = isNearLevel(selectedProfile?.vah) || isNearLevel(session?.sessionHigh) || isNearLevel(session?.priorHigh) || isNearLevel(session?.openingRangeHigh)
-  const profileNearLow = isNearLevel(selectedProfile?.val) || isNearLevel(session?.sessionLow) || isNearLevel(session?.priorLow) || isNearLevel(session?.openingRangeLow)
 
   return {
-    hasContext: (highs.length > 0 && lows.length > 0) || nearbyLevels.length > 0 || Boolean(session || selectedProfile),
+    hasContext: highs.length > 0 && lows.length > 0,
     step,
     referenceHigh,
     referenceLow,
     rangeMid,
-    nearHigh: derivedNearHigh || profileNearHigh,
-    nearLow: derivedNearLow || profileNearLow,
-    sweptHigh: (currentHigh >= referenceHigh + step * 0.75 && currentClose <= referenceHigh - step * 0.25)
-      || (session?.priorHigh ? currentHigh >= Number(session.priorHigh) + step * 0.5 && currentClose <= Number(session.priorHigh) - step * 0.25 : false),
-    sweptLow: (currentLow <= referenceLow - step * 0.75 && currentClose >= referenceLow + step * 0.25)
-      || (session?.priorLow ? currentLow <= Number(session.priorLow) - step * 0.5 && currentClose >= Number(session.priorLow) + step * 0.25 : false),
-    profileNearPOC: isNearLevel(selectedProfile?.poc, 3),
-    nearbyLevels,
+    nearHigh: currentHigh >= referenceHigh - step * 1.5,
+    nearLow: currentLow <= referenceLow + step * 1.5,
+    sweptHigh: currentHigh >= referenceHigh + step * 0.75 && currentClose <= referenceHigh - step * 0.25,
+    sweptLow: currentLow <= referenceLow - step * 0.75 && currentClose >= referenceLow + step * 0.25,
     volumeSpike: averageVolume > 0
       ? (Number(candle?.total_volume) || 0) >= averageVolume * 1.25
       : (Number(candle?.total_volume) || 0) > 0,
@@ -667,66 +643,28 @@ function buildQualityTone(direction, reliable) {
 }
 
 function buildSetupQuality({
-  scoreConfig,
   reliable,
-  locationStrong,
   triggerStrong,
   confirmation,
   flowSupport,
   liquiditySupport,
   volumeSpike,
-  sessionSupport,
-  confluenceSupport,
-  profileSupport,
-  sessionFilter,
-  sessionQuality,
 }) {
-  const weights = scoreConfig?.weights || {
-    reliable: 2,
-    location: 2,
-    trigger: 2,
-    confirmation: 2,
-    flow: 1,
-    liquidity: 1,
-    volume: 1,
-    session: 1,
-    confluence: 1,
-    profile: 1,
-  }
   let score = 0
-  if (reliable) score += weights.reliable || 0
-  if (locationStrong) score += weights.location || 0
-  if (triggerStrong) score += weights.trigger || 0
-  if (confirmation.state === "confirmed") score += weights.confirmation || 0
-  if (flowSupport) score += weights.flow || 0
-  if (liquiditySupport) score += weights.liquidity || 0
-  if (volumeSpike) score += weights.volume || 0
-  if (sessionSupport) score += weights.session || 0
-  if (confluenceSupport) score += weights.confluence || 0
-  if (profileSupport) score += weights.profile || 0
-  if (confirmation.state === "failed") {
-    score = Math.max(0, score - (weights.confirmation || 2))
-  }
-
-  const bucket = sessionQuality?.bucket || "balanced"
-  if (sessionFilter === "strict" && ["poor", "chaotic", "history"].includes(bucket)) {
-    return 0
-  }
-  if (sessionFilter === "balanced") {
-    if (bucket === "poor") score = Math.max(0, score - 1)
-    if (bucket === "chaotic") score = Math.max(0, score - 2)
-    if (bucket === "history") score = Math.max(0, score - 3)
-  }
+  if (reliable) score += 2
+  if (triggerStrong) score += 2
+  if (confirmation.state === "confirmed") score += 2
+  if (flowSupport) score += 2
+  if (liquiditySupport) score += 1
+  if (volumeSpike) score += 1
+  if (confirmation.state === "failed") score = Math.max(0, score - 2)
   return score
 }
 
 function buildSetupRows(setup) {
   return [
     { label: "Setup", value: setup.setupLabel },
-    ...(setup.locationLabel ? [{ label: "Location", value: setup.locationLabel }] : []),
     { label: "Confirmation", value: setup.confirmation.row },
-    ...(setup.environmentLabel ? [{ label: "Environment", value: setup.environmentLabel }] : []),
-    ...(setup.confluenceLabel ? [{ label: "HTF", value: setup.confluenceLabel }] : []),
     { label: "Risk", value: setup.invalidation },
     { label: "Target", value: setup.target },
   ]
@@ -740,402 +678,267 @@ function detectOrderflowSetup({
   liquidity,
   imbalance,
   reliable,
-  market,
 }) {
-  const location = buildLocationContext(candle, recentCandles, market)
-  if (!location.hasContext) return null
+  const context = buildLocationContext(candle, recentCandles)
+  const maxScore = 10
+  const step = context.step
+  const bullishLiquidity = (liquidity?.bias || 0) >= 0
+  const bearishLiquidity = (liquidity?.bias || 0) <= 0
+  const bullishFlow = ["fresh_longs", "buy_build", "bullish_divergence", "mixed"].includes(participation.kind)
+  const bearishFlow = ["fresh_shorts", "sell_build", "bearish_divergence", "mixed"].includes(participation.kind)
 
-  const sessionQuality = market?.session?.quality || null
-  const confluence = market?.confluence || null
-  const selectedProfile = market?.profile?.selected || null
-  const scoreConfig = market?.scoreConfig || null
-  const sessionFilter = market?.sessionFilter || "balanced"
-  const maxScore = scoreConfig?.maxScore || 11
-  const locationLabel = location.nearbyLevels?.length
-    ? location.nearbyLevels.map((level) => level.text).join(" | ")
-    : location.nearHigh
-      ? "Trading into local highs"
-      : location.nearLow
-        ? "Trading into local lows"
-        : ""
-  const environmentLabel = sessionQuality?.row || ""
-  const confluenceLabel = confluence?.row || ""
-  const bullishConfluence = (confluence?.directionBias || 0) >= 1
-  const bearishConfluence = (confluence?.directionBias || 0) <= -1
-  const sessionSupport = !sessionQuality || sessionQuality.score >= 1
-  const profileSupport = Boolean(
-    location.profileNearPOC
-    || (location.nearHigh && selectedProfile?.vah)
-    || (location.nearLow && selectedProfile?.val)
-  )
-  if (sessionFilter === "strict" && ["poor", "chaotic", "history"].includes(sessionQuality?.bucket)) {
-    return null
-  }
-  const step = location.step
-  const deltaThreshold = Math.max((Number(candle?.total_volume) || 0) * 0.15, location.averageVolume * 0.12, 1)
-  const buyAggression = Boolean(
-    candle?.absorption_high
-    || candle?.unfinished_high
-    || candle?.sweep_buy
-    || imbalance?.side === "buy"
-    || (Number(candle?.candle_delta) || 0) >= deltaThreshold
-  )
-  const sellAggression = Boolean(
-    candle?.absorption_low
-    || candle?.unfinished_low
-    || candle?.sweep_sell
-    || imbalance?.side === "sell"
-    || (Number(candle?.candle_delta) || 0) <= -deltaThreshold
-  )
-
-  if (location.sweptHigh && buyAggression) {
+  if (candle?.absorption_high) {
     const confirmation = evaluateReversalConfirmation(futureCandles, "short", candle, step)
-    const flowSupport = ["short_covering", "bearish_divergence", "mixed"].includes(participation.kind)
-      || Boolean(candle?.delta_divergence_bear || candle?.absorption_high)
-    const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
-      scoreConfig,
       reliable,
-      locationStrong: true,
       triggerStrong: true,
       confirmation,
-      flowSupport,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bearishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
+      flowSupport: bearishFlow || Boolean(candle?.delta_divergence_bear),
+      liquiditySupport: bearishLiquidity,
+      volumeSpike: context.volumeSpike,
     })
 
     return {
       direction: "short",
-      setupLabel: "Bull trap short",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
+      setupLabel: "Absorption reversal short",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
-      target: `Back inside range toward ${formatLevelPrice(location.rangeMid, step)}, then ${formatLevelPrice(location.referenceLow, step)}`,
-      chips: ["Trap setup", "Fade breakout"],
-      scoreAdjustment: confirmation.state === "confirmed" ? -6 : -3,
-      headline: confirmation.state === "confirmed"
-        ? "Bull trap confirmed at swing high"
-        : "Possible bull trap at swing high",
-      detail: confirmation.state === "confirmed"
-        ? "Aggressive buyers chased a sweep above the prior high, but price failed back inside the range and the next bar rejected it. That is the classic trapped-breakout short."
-        : "Price swept the prior high, printed aggressive buying at the top, and closed back inside the range. For sniper execution, wait for the next 1-2 bars to reject the high cleanly.",
-    }
-  }
-
-  if (location.sweptLow && sellAggression) {
-    const confirmation = evaluateReversalConfirmation(futureCandles, "long", candle, step)
-    const flowSupport = ["long_liquidation", "bullish_divergence", "mixed"].includes(participation.kind)
-      || Boolean(candle?.delta_divergence_bull || candle?.absorption_low)
-    const liquiditySupport = (liquidity?.bias || 0) >= 0
-    const qualityScore = buildSetupQuality({
-      scoreConfig,
-      reliable,
-      locationStrong: true,
-      triggerStrong: true,
-      confirmation,
-      flowSupport,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bullishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
-    })
-
-    return {
-      direction: "long",
-      setupLabel: "Bear trap long",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
-      gradeTone: buildQualityTone("long", reliable),
-      qualityScore,
-      confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
-      invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
-      target: `Back inside range toward ${formatLevelPrice(location.rangeMid, step)}, then ${formatLevelPrice(location.referenceHigh, step)}`,
-      chips: ["Trap setup", "Fade breakdown"],
-      scoreAdjustment: confirmation.state === "confirmed" ? 6 : 3,
-      headline: confirmation.state === "confirmed"
-        ? "Bear trap confirmed at swing low"
-        : "Possible bear trap at swing low",
-      detail: confirmation.state === "confirmed"
-        ? "Aggressive sellers swept the prior low, but price failed back inside the range and the next bar rejected it. That is the classic trapped-breakdown long."
-        : "Price swept the prior low, printed aggressive selling at the bottom, and closed back inside the range. For sniper execution, wait for the next 1-2 bars to reject the low cleanly.",
-    }
-  }
-
-  if (location.nearHigh && candle?.absorption_high) {
-    const confirmation = evaluateReversalConfirmation(futureCandles, "short", candle, step)
-    const flowSupport = ["short_covering", "bearish_divergence", "mixed"].includes(participation.kind)
-      || Boolean(candle?.delta_divergence_bear)
-    const liquiditySupport = (liquidity?.bias || 0) <= 0
-    const qualityScore = buildSetupQuality({
-      scoreConfig,
-      reliable,
-      locationStrong: true,
-      triggerStrong: true,
-      confirmation,
-      flowSupport,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bearishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
-    })
-
-    return {
-      direction: "short",
-      setupLabel: "Resistance absorption short",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
-      gradeTone: buildQualityTone("short", reliable),
-      qualityScore,
-      confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
-      invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
-      target: `Back away from resistance toward ${formatLevelPrice(location.rangeMid, step)}`,
-      chips: ["Absorption", "Resistance defense"],
+      target: `Back through ${formatLevelPrice((Number(candle?.low) || 0) + ((Number(candle?.high) || 0) - (Number(candle?.low) || 0)) * 0.5, step)}`,
+      chips: ["Absorption", "Failed lift"],
       scoreAdjustment: confirmation.state === "confirmed" ? -5 : -2,
       headline: confirmation.state === "confirmed"
-        ? "Seller absorption held near resistance"
-        : "Seller absorption is forming near resistance",
+        ? "Seller absorption reversal confirmed"
+        : "Seller absorption is forming",
       detail: confirmation.state === "confirmed"
-        ? "Buyers lifted the offer into a known high area, but passive sellers absorbed the flow and the next bar failed to extend. That is cleaner than shorting raw green numbers."
-        : "Buyers are hitting the offer near a prior high, but price is not making clean progress. That often becomes a short only after the next bar confirms the rejection.",
+        ? "Aggressive buyers kept lifting, but passive sellers absorbed the move and the next bar confirmed failure. This is a cleaner short than fading random strength."
+        : "Buyers are lifting into a bar that is not advancing cleanly. Wait for the next 1-2 bars to reject the lift before treating it as a short.",
     }
   }
 
-  if (location.nearLow && candle?.absorption_low) {
+  if (candle?.absorption_low) {
     const confirmation = evaluateReversalConfirmation(futureCandles, "long", candle, step)
-    const flowSupport = ["long_liquidation", "bullish_divergence", "mixed"].includes(participation.kind)
-      || Boolean(candle?.delta_divergence_bull)
-    const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
-      scoreConfig,
       reliable,
-      locationStrong: true,
       triggerStrong: true,
       confirmation,
-      flowSupport,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bullishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
+      flowSupport: bullishFlow || Boolean(candle?.delta_divergence_bull),
+      liquiditySupport: bullishLiquidity,
+      volumeSpike: context.volumeSpike,
     })
 
     return {
       direction: "long",
-      setupLabel: "Support absorption long",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
+      setupLabel: "Absorption reversal long",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
-      target: `Back away from support toward ${formatLevelPrice(location.rangeMid, step)}`,
-      chips: ["Absorption", "Support defense"],
+      target: `Back through ${formatLevelPrice((Number(candle?.low) || 0) + ((Number(candle?.high) || 0) - (Number(candle?.low) || 0)) * 0.5, step)}`,
+      chips: ["Absorption", "Failed push"],
       scoreAdjustment: confirmation.state === "confirmed" ? 5 : 2,
       headline: confirmation.state === "confirmed"
-        ? "Buyer absorption held near support"
-        : "Buyer absorption is forming near support",
+        ? "Buyer absorption reversal confirmed"
+        : "Buyer absorption is forming",
       detail: confirmation.state === "confirmed"
-        ? "Sellers hit the bid into a known low area, but passive buyers absorbed the flow and the next bar failed to extend. That is the cleaner long entry than guessing at the low."
-        : "Sellers are pressing into support, but price is not making clean progress lower. That often becomes a long only after the next bar confirms the defense.",
+        ? "Aggressive sellers kept hitting the bid, but passive buyers absorbed the move and the next bar confirmed failure lower. This is a cleaner long than guessing at a bottom."
+        : "Sellers are pressing into a bar that is not extending cleanly. Wait for the next 1-2 bars to reject the push before treating it as a long.",
     }
   }
 
   if (imbalance?.stacked && imbalance.side === "buy" && ["fresh_longs", "buy_build"].includes(participation.kind)) {
     const confirmation = evaluateContinuationConfirmation(futureCandles, "long", candle, step)
-    const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
-      scoreConfig,
       reliable,
-      locationStrong: location.nearHigh,
       triggerStrong: true,
       confirmation,
       flowSupport: true,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bullishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
+      liquiditySupport: bullishLiquidity,
+      volumeSpike: context.volumeSpike,
     })
 
     return {
       direction: "long",
-      setupLabel: "Stacked imbalance continuation long",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
+      setupLabel: "Initiative buy continuation",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
-      target: `Continuation through the high above ${formatLevelPrice(Number(candle?.high) || 0, step)}`,
-      chips: ["Stacked imbalance", "Continuation"],
+      target: `Extension above ${formatLevelPrice(Number(candle?.high) || 0, step)}`,
+      chips: ["Stacked imbalance", "Fresh longs"],
       scoreAdjustment: confirmation.state === "confirmed" ? 4 : 2,
       headline: confirmation.state === "confirmed"
-        ? "Buy imbalance continuation confirmed"
-        : "Stacked buy imbalance needs follow-through",
+        ? "Initiative buying continuation confirmed"
+        : "Initiative buying needs follow-through",
       detail: confirmation.state === "confirmed"
-        ? "Multiple buy imbalances fired together and the next bar extended higher. That is the kind of continuation you trade with, not fade."
-        : "Stacked buy imbalances alone are not enough. The next bar still needs to extend and hold the buy pressure before this becomes a cleaner continuation long.",
+        ? "Stacked buy imbalance, supportive flow, and follow-through suggest buyers are still in control."
+        : "The bar shows aggressive buying, but continuation still needs the next bar to extend and hold.",
     }
   }
 
   if (imbalance?.stacked && imbalance.side === "sell" && ["fresh_shorts", "sell_build"].includes(participation.kind)) {
     const confirmation = evaluateContinuationConfirmation(futureCandles, "short", candle, step)
-    const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
-      scoreConfig,
       reliable,
-      locationStrong: location.nearLow,
       triggerStrong: true,
       confirmation,
       flowSupport: true,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bearishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
+      liquiditySupport: bearishLiquidity,
+      volumeSpike: context.volumeSpike,
     })
 
     return {
       direction: "short",
-      setupLabel: "Stacked imbalance continuation short",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
+      setupLabel: "Initiative sell continuation",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
-      target: `Continuation through the low below ${formatLevelPrice(Number(candle?.low) || 0, step)}`,
-      chips: ["Stacked imbalance", "Continuation"],
+      target: `Extension below ${formatLevelPrice(Number(candle?.low) || 0, step)}`,
+      chips: ["Stacked imbalance", "Fresh shorts"],
       scoreAdjustment: confirmation.state === "confirmed" ? -4 : -2,
       headline: confirmation.state === "confirmed"
-        ? "Sell imbalance continuation confirmed"
-        : "Stacked sell imbalance needs follow-through",
+        ? "Initiative selling continuation confirmed"
+        : "Initiative selling needs follow-through",
       detail: confirmation.state === "confirmed"
-        ? "Multiple sell imbalances fired together and the next bar extended lower. That is the kind of continuation you trade with, not fade."
-        : "Stacked sell imbalances alone are not enough. The next bar still needs to extend and hold the sell pressure before this becomes a cleaner continuation short.",
+        ? "Stacked sell imbalance, supportive flow, and follow-through suggest sellers are still in control."
+        : "The bar shows aggressive selling, but continuation still needs the next bar to extend and hold.",
     }
   }
 
-  if (location.nearHigh && (candle?.delta_divergence_bear || participation.kind === "bearish_divergence")) {
+  if (candle?.delta_divergence_bear || participation.kind === "bearish_divergence") {
     const confirmation = evaluateReversalConfirmation(futureCandles, "short", candle, step)
-    const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
-      scoreConfig,
       reliable,
-      locationStrong: true,
       triggerStrong: true,
       confirmation,
       flowSupport: true,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bearishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
+      liquiditySupport: bearishLiquidity,
+      volumeSpike: context.volumeSpike,
     })
 
     return {
       direction: "short",
-      setupLabel: "Bearish divergence reversal",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
+      setupLabel: "Flow divergence short",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
-      target: `Back into the prior range toward ${formatLevelPrice(location.rangeMid, step)}`,
-      chips: ["Divergence", "Reversal"],
-      scoreAdjustment: confirmation.state === "confirmed" ? -4 : -2,
+      target: `Back through ${formatLevelPrice((Number(candle?.open) || 0), step)}`,
+      chips: ["Divergence", "Weak lift"],
+      scoreAdjustment: confirmation.state === "confirmed" ? -3 : -1,
       headline: confirmation.state === "confirmed"
-        ? "Bearish divergence reversal confirmed"
-        : "Bearish divergence is forming at the high",
+        ? "Bearish flow divergence confirmed"
+        : "Bearish flow divergence is forming",
       detail: confirmation.state === "confirmed"
-        ? "Price stretched into a higher area, but the underlying flow weakened and the next bar confirmed the rejection. That is a cleaner reversal than fading strength blindly."
-        : "Price is pushing into the high area without strong flow confirmation. That can become a short only if the next bar rejects the area.",
+        ? "Price tried to hold up, but the underlying flow weakened and the next bar confirmed failure."
+        : "The lift is losing flow quality. Wait for confirmation before treating it as a short.",
     }
   }
 
-  if (location.nearLow && (candle?.delta_divergence_bull || participation.kind === "bullish_divergence")) {
+  if (candle?.delta_divergence_bull || participation.kind === "bullish_divergence") {
     const confirmation = evaluateReversalConfirmation(futureCandles, "long", candle, step)
-    const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
-      scoreConfig,
       reliable,
-      locationStrong: true,
       triggerStrong: true,
       confirmation,
       flowSupport: true,
-      liquiditySupport,
-      volumeSpike: location.volumeSpike,
-      sessionSupport,
-      confluenceSupport: bullishConfluence,
-      profileSupport,
-      sessionFilter,
-      sessionQuality,
+      liquiditySupport: bullishLiquidity,
+      volumeSpike: context.volumeSpike,
     })
 
     return {
       direction: "long",
-      setupLabel: "Bullish divergence reversal",
-      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
+      setupLabel: "Flow divergence long",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
-      locationLabel,
-      environmentLabel,
-      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
-      target: `Back into the prior range toward ${formatLevelPrice(location.rangeMid, step)}`,
-      chips: ["Divergence", "Reversal"],
-      scoreAdjustment: confirmation.state === "confirmed" ? 4 : 2,
+      target: `Back through ${formatLevelPrice((Number(candle?.open) || 0), step)}`,
+      chips: ["Divergence", "Weak flush"],
+      scoreAdjustment: confirmation.state === "confirmed" ? 3 : 1,
       headline: confirmation.state === "confirmed"
-        ? "Bullish divergence reversal confirmed"
-        : "Bullish divergence is forming at the low",
+        ? "Bullish flow divergence confirmed"
+        : "Bullish flow divergence is forming",
       detail: confirmation.state === "confirmed"
-        ? "Price stretched into a lower area, but the underlying flow improved and the next bar confirmed the rejection. That is a cleaner reversal than bottom-picking blindly."
-        : "Price is pressing into the low area without strong sell-side confirmation. That can become a long only if the next bar rejects the area.",
+        ? "Price tried to stay heavy, but the underlying flow improved and the next bar confirmed failure lower."
+        : "The flush is losing flow quality. Wait for confirmation before treating it as a long.",
+    }
+  }
+
+  if (participation.kind === "short_covering" && candle?.exhaustion_high) {
+    const confirmation = evaluateReversalConfirmation(futureCandles, "short", candle, step)
+    const qualityScore = buildSetupQuality({
+      reliable,
+      triggerStrong: true,
+      confirmation,
+      flowSupport: true,
+      liquiditySupport: bearishLiquidity,
+      volumeSpike: context.volumeSpike,
+    })
+
+    return {
+      direction: "short",
+      setupLabel: "Covering exhaustion short",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
+      gradeTone: buildQualityTone("short", reliable),
+      qualityScore,
+      confirmation,
+      invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
+      target: `Back through ${formatLevelPrice((Number(candle?.open) || 0), step)}`,
+      chips: ["Short covering", "Exhaustion"],
+      scoreAdjustment: confirmation.state === "confirmed" ? -3 : -1,
+      headline: confirmation.state === "confirmed"
+        ? "Covering pop failed"
+        : "Covering pop looks tired",
+      detail: confirmation.state === "confirmed"
+        ? "The move up looked more like shorts exiting than fresh buying, and the next bar confirmed the failure."
+        : "Price is lifting on what looks like covering, not strong fresh buying. Wait for the next bar to fail before shorting it.",
+    }
+  }
+
+  if (participation.kind === "long_liquidation" && candle?.exhaustion_low) {
+    const confirmation = evaluateReversalConfirmation(futureCandles, "long", candle, step)
+    const qualityScore = buildSetupQuality({
+      reliable,
+      triggerStrong: true,
+      confirmation,
+      flowSupport: true,
+      liquiditySupport: bullishLiquidity,
+      volumeSpike: context.volumeSpike,
+    })
+
+    return {
+      direction: "long",
+      setupLabel: "Liquidation exhaustion long",
+      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/${maxScore})`,
+      gradeTone: buildQualityTone("long", reliable),
+      qualityScore,
+      confirmation,
+      invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
+      target: `Back through ${formatLevelPrice((Number(candle?.open) || 0), step)}`,
+      chips: ["Long liquidation", "Exhaustion"],
+      scoreAdjustment: confirmation.state === "confirmed" ? 3 : 1,
+      headline: confirmation.state === "confirmed"
+        ? "Liquidation flush failed"
+        : "Liquidation flush looks tired",
+      detail: confirmation.state === "confirmed"
+        ? "The move down looked more like longs exiting than fresh short pressure, and the next bar confirmed the failure lower."
+        : "Price is flushing on what looks like liquidation, not strong fresh selling. Wait for the next bar to fail before buying it.",
     }
   }
 
   return null
 }
 
-function buildHistoryReading(candle, participation, liquidity, dataQuality, market) {
+function buildHistoryReading(candle, participation, liquidity, dataQuality) {
   const rows = []
   const chips = []
 
@@ -1144,12 +947,6 @@ function buildHistoryReading(candle, participation, liquidity, dataQuality, mark
   }
   if (liquidity?.row) {
     rows.push({ label: "Liquidity", value: liquidity.row })
-  }
-  if (market?.session?.quality?.row) {
-    rows.push({ label: "Session", value: market.session.quality.row })
-  }
-  if (market?.confluence?.row) {
-    rows.push({ label: "HTF", value: market.confluence.row })
   }
   rows.push({ label: "Data", value: dataQuality })
 
@@ -1198,10 +995,9 @@ export function buildOrderflowReading(candle, context) {
   const participation = summarizeParticipation(candle, readingContext.previousCandle, reliable)
   const liquidity = summarizeLiquidity(candle)
   const dataQuality = describeDataQuality(candle, reliable)
-  const market = readingContext.market || null
 
   if (!reliable) {
-    return buildHistoryReading(candle, participation, liquidity, dataQuality, market)
+    return buildHistoryReading(candle, participation, liquidity, dataQuality)
   }
 
   const setup = detectOrderflowSetup({
@@ -1212,7 +1008,6 @@ export function buildOrderflowReading(candle, context) {
     liquidity,
     imbalance,
     reliable,
-    market,
   })
 
   const rows = []
@@ -1220,7 +1015,7 @@ export function buildOrderflowReading(candle, context) {
   let bullScore = 0
   let bearScore = 0
   let headline = "Balanced orderflow"
-  let detail = "No standout orderflow edge on this bar. Use location and follow-through for context."
+  let detail = "No standout orderflow edge on this bar. Wait for cleaner participation and follow-through."
   let gradeLabel = ""
   let gradeTone = "neutral"
 
@@ -1267,7 +1062,7 @@ export function buildOrderflowReading(candle, context) {
     pushUnique(chips, "Seller exhaustion")
     if (bullScore >= bearScore && !candle.absorption_low) {
       headline = "Sellers look exhausted near the low"
-      detail = "Price pushed lower but the selling effort dried up, which can support a bounce if context agrees."
+      detail = "Price pushed lower but the selling effort dried up, which can allow a bounce if the next bars confirm it."
     }
   }
 
@@ -1276,7 +1071,7 @@ export function buildOrderflowReading(candle, context) {
     pushUnique(chips, "Buyer exhaustion")
     if (bearScore > bullScore && !candle.absorption_high) {
       headline = "Buyers look exhausted near the high"
-      detail = "Price pushed higher but the buying effort faded, which can support a rejection if context agrees."
+      detail = "Price pushed higher but the buying effort faded, which can allow a rejection if the next bars confirm it."
     }
   }
 
@@ -1386,15 +1181,6 @@ export function buildOrderflowReading(candle, context) {
   if (liquidity?.row) {
     rows.push({ label: "Liquidity", value: liquidity.row })
   }
-  if (market?.session?.quality?.row) {
-    rows.push({ label: "Session", value: market.session.quality.row })
-  }
-  if (market?.confluence?.row) {
-    rows.push({ label: "HTF", value: market.confluence.row })
-  }
-  if (market?.nearbyLevels?.length) {
-    rows.push({ label: "Levels", value: market.nearbyLevels.map((level) => level.text).join(" | ") })
-  }
   rows.push({ label: "Data", value: dataQuality })
 
   const score = bullScore - bearScore
@@ -1428,6 +1214,7 @@ export function buildOrderflowReading(candle, context) {
       direction: setup.direction,
       gradeLabel: setup.gradeLabel,
       qualityScore: setup.qualityScore,
+      confirmationState: setup.confirmation.state,
       setupLabel: setup.setupLabel,
       headline: setup.headline,
       price: setup.direction === "short" ? Number(candle?.high) || Number(candle?.close) || 0 : Number(candle?.low) || Number(candle?.close) || 0,

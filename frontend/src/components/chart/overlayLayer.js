@@ -234,37 +234,19 @@ export function drawProfileStudy(ctx, sourceCandles, chartH, p2y, rowSize, value
   }
 }
 
-function resolveSessionRange(timestamp, sessionMode) {
-  const date = new Date(timestamp);
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const day = date.getUTCDate();
-  if (sessionMode === "asia") {
-    const start = Date.UTC(year, month, day, 0, 0, 0, 0);
-    return { start, end: start + 8 * 60 * 60_000 };
-  }
-  if (sessionMode === "london") {
-    const start = Date.UTC(year, month, day, 7, 0, 0, 0);
-    return { start, end: start + 8 * 60 * 60_000 };
-  }
-  if (sessionMode === "newyork") {
-    const start = Date.UTC(year, month, day, 13, 0, 0, 0);
-    return { start, end: start + 8 * 60 * 60_000 };
-  }
-  const start = Date.UTC(year, month, day, 0, 0, 0, 0);
-  return { start, end: start + 24 * 60 * 60_000 };
-}
-
-export function selectProfileSource(allCandles, visible, profileStudy, sessionMode = "utcDay") {
+export function selectProfileSource(allCandles, visible, profileStudy) {
   if (!visible?.length) return [];
   if (profileStudy === "composite") {
     return allCandles;
   }
   if (profileStudy === "session") {
     const lastVisible = visible.at(-1);
-    const range = resolveSessionRange(lastVisible.candle_open_time, sessionMode);
+    const lastDate = new Date(lastVisible.candle_open_time);
     return allCandles.filter((candle) => {
-      return candle.candle_open_time >= range.start && candle.candle_open_time < range.end;
+      const date = new Date(candle.candle_open_time);
+      return date.getUTCFullYear() === lastDate.getUTCFullYear()
+        && date.getUTCMonth() === lastDate.getUTCMonth()
+        && date.getUTCDate() === lastDate.getUTCDate();
     });
   }
   return visible;
@@ -475,42 +457,6 @@ function drawHorizontalLevel(ctx, price, p2y, chartH, color) {
   ctx.moveTo(0, y);
   ctx.lineTo(ctx.canvas.clientWidth || ctx.canvas.width, y);
   ctx.stroke();
-  ctx.setLineDash([]);
-}
-
-export function drawSessionLevels(ctx, marketContext, chartW, p2y, chartH, rowSize, settings) {
-  const session = marketContext?.session;
-  const selectedProfile = marketContext?.profile?.selected;
-  if (!session) return;
-
-  const levels = [
-    { price: session.sessionHigh, color: "rgba(66,165,245,0.55)" },
-    { price: session.sessionLow, color: "rgba(66,165,245,0.55)" },
-    { price: session.priorHigh, color: "rgba(250,204,21,0.5)" },
-    { price: session.priorLow, color: "rgba(250,204,21,0.5)" },
-    { price: session.openingRangeHigh, color: "rgba(148,163,184,0.42)" },
-    { price: session.openingRangeLow, color: "rgba(148,163,184,0.42)" },
-  ];
-
-  if (settings?.showPOC && selectedProfile?.poc) {
-    levels.push({ price: selectedProfile.poc, color: "rgba(239,83,80,0.6)" });
-  }
-  if (settings?.showVA && selectedProfile?.vah && selectedProfile?.val) {
-    levels.push({ price: selectedProfile.vah, color: "rgba(38,166,154,0.45)" });
-    levels.push({ price: selectedProfile.val, color: "rgba(38,166,154,0.45)" });
-  }
-
-  for (const level of levels) {
-    const y = p2y(level.price);
-    if (y < 0 || y > chartH) continue;
-    ctx.strokeStyle = level.color;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(chartW, y);
-    ctx.stroke();
-  }
   ctx.setLineDash([]);
 }
 

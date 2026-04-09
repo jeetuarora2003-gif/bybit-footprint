@@ -12,7 +12,6 @@ import {
   drawLiquidityHeatmap,
   drawProfileStudy,
   drawPriceAxis,
-  drawSessionLevels,
   selectProfileSource,
   drawTimeAxis,
   drawVWAP,
@@ -33,12 +32,15 @@ import {
   zoomPriceRange,
 } from "./chart/shared";
 
+function markForRedraw(state) {
+  if (state) state.needsRedraw = true;
+}
+
 export default function ChartCanvas({
   candles,
   depthHistory = [],
   settings,
   activeFeatures,
-  marketContext = null,
   annotations = [],
   onCrosshairMove,
   viewCommand,
@@ -52,7 +54,6 @@ export default function ChartCanvas({
   const depthHistoryRef = useRef(depthHistory);
   const settingsRef = useRef(settings);
   const featuresRef = useRef(activeFeatures);
-  const marketContextRef = useRef(marketContext);
   const annotationsRef = useRef(annotations);
   const crosshairCbRef = useRef(onCrosshairMove);
 
@@ -61,11 +62,12 @@ export default function ChartCanvas({
     depthHistoryRef.current = depthHistory;
     settingsRef.current = settings;
     featuresRef.current = activeFeatures;
-    marketContextRef.current = marketContext;
     annotationsRef.current = annotations;
     crosshairCbRef.current = onCrosshairMove;
-  }, [candles, depthHistory, settings, activeFeatures, marketContext, annotations, onCrosshairMove]);
+    markForRedraw(stateRef.current);
+  }, [candles, depthHistory, settings, activeFeatures, annotations, onCrosshairMove]);
 
+  /* eslint-disable react-hooks/immutability */
   useEffect(() => {
     if (!viewCommand) return;
     const state = stateRef.current;
@@ -77,7 +79,9 @@ export default function ChartCanvas({
       state.autoScaleY = true;
       state.velocityX = 0;
     }
+    markForRedraw(state);
   }, [viewCommand]);
+  /* eslint-enable react-hooks/immutability */
 
   /* eslint-disable react-hooks/immutability */
   useEffect(() => {
@@ -87,6 +91,7 @@ export default function ChartCanvas({
     if (state.autoScroll) {
       state.candleW = recommendedCandleWidth(settings, nextModeFlags);
     }
+    markForRedraw(state);
   }, [activeFeatures, settings]);
   /* eslint-enable react-hooks/immutability */
 
@@ -118,25 +123,48 @@ export default function ChartCanvas({
     hoveredCluster: null,
     lastCanvasW: 0,
     lastCanvasH: 0,
+    lastGoLiveVisible: null,
+    needsRedraw: true,
   });
+
+  useEffect(() => {
+    if (!containerRef.current || typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(() => {
+      markForRedraw(stateRef.current);
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let running = true;
     const loop = () => {
       if (!running) return;
-      drawFrame(
-        canvasRef.current,
-        containerRef.current,
-        stateRef.current,
-        candlesRef.current,
-        depthHistoryRef.current,
-        settingsRef.current,
-        featuresRef.current,
-        marketContextRef.current,
-        annotationsRef.current,
-      );
+      const state = stateRef.current;
+      const shouldDraw = state.needsRedraw
+        || state.dragging
+        || state.isDraggingY
+        || Math.abs(state.velocityX) > 0.05;
+
+      if (shouldDraw) {
+        drawFrame(
+          canvasRef.current,
+          containerRef.current,
+          state,
+          candlesRef.current,
+          depthHistoryRef.current,
+          settingsRef.current,
+          featuresRef.current,
+          annotationsRef.current,
+        );
+      }
       const button = goLiveBtnRef.current;
-      if (button) button.style.display = stateRef.current.autoScroll ? "none" : "flex";
+      const shouldShowGoLive = !state.autoScroll;
+      if (button && state.lastGoLiveVisible !== shouldShowGoLive) {
+        button.style.display = shouldShowGoLive ? "flex" : "none";
+        state.lastGoLiveVisible = shouldShowGoLive;
+      }
       rafRef.current = requestAnimationFrame(loop);
     };
     loop();
@@ -165,12 +193,14 @@ export default function ChartCanvas({
         state.offsetX += event.deltaY * 0.6;
         state.autoScroll = false;
         state.velocityX = 0;
+        markForRedraw(state);
         return;
       }
 
       if ((overPriceAxis || event.ctrlKey) && mouseY >= 0 && mouseY <= chartH) {
         const zoomFactor = event.deltaY > 0 ? 1.08 : 0.92;
         zoomPriceRange(state, chartH, mouseY, zoomFactor);
+        markForRedraw(state);
         return;
       }
 
@@ -181,6 +211,7 @@ export default function ChartCanvas({
         state.offsetX = idxUnderMouse * state.candleW - mouseX;
         state.autoScroll = false;
         state.velocityX = 0;
+        markForRedraw(state);
       }
     };
 
@@ -222,6 +253,7 @@ export default function ChartCanvas({
       state.lastDragTime = now;
       state.autoScroll = false;
     }
+    markForRedraw(state);
 
     const chartW = rect.width - PRICE_AXIS_W;
     const chartH = rect.height - TIME_AXIS_H;
@@ -269,6 +301,7 @@ export default function ChartCanvas({
       const chartH = rect.height - TIME_AXIS_H;
       const t = clamp(1 - y / chartH, 0, 1);
       state.anchorPrice = state.priceMin + t * (state.priceMax - state.priceMin);
+      markForRedraw(state);
       return;
     }
 
@@ -281,11 +314,13 @@ export default function ChartCanvas({
     state.dragChartH = rect.height - TIME_AXIS_H;
     state.lastDragTime = performance.now();
     state.velocityX = 0;
+    markForRedraw(state);
   }, []);
 
   const onUp = useCallback((event) => {
     stateRef.current.dragging = false;
     stateRef.current.isDraggingY = false;
+    markForRedraw(stateRef.current);
     canvasRef.current?.releasePointerCapture(event.pointerId);
   }, []);
 
@@ -294,6 +329,7 @@ export default function ChartCanvas({
     clearHoverState(state);
     state.mouse.x = -1;
     state.mouse.y = -1;
+    markForRedraw(state);
     if (crosshairCbRef.current) {
       crosshairCbRef.current(null);
     }
@@ -304,14 +340,17 @@ export default function ChartCanvas({
     if (!rect) return;
     if (event.clientX - rect.left >= rect.width - PRICE_AXIS_W) {
       stateRef.current.autoScaleY = true;
+      markForRedraw(stateRef.current);
       return;
     }
     stateRef.current.autoScroll = true;
+    markForRedraw(stateRef.current);
   }, []);
 
   const onGoLive = useCallback(() => {
     stateRef.current.autoScroll = true;
     stateRef.current.velocityX = 0;
+    markForRedraw(stateRef.current);
   }, []);
   /* eslint-enable react-hooks/immutability */
 
@@ -354,7 +393,7 @@ export default function ChartCanvas({
   );
 }
 
-function drawFrame(canvas, container, state, candles, depthHistory, settings, activeFeatures, marketContext, annotations) {
+function drawFrame(canvas, container, state, candles, depthHistory, settings, activeFeatures, annotations) {
   if (!canvas || !container || !candles?.length) return;
 
   const dpr = window.devicePixelRatio || 1;
@@ -482,7 +521,7 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
   }
 
   if (modeFlags.showProfileStudy) {
-    const profileSource = selectProfileSource(candles, visible, modeFlags.profileStudy, settings.sessionMode);
+    const profileSource = selectProfileSource(candles, visible, modeFlags.profileStudy);
     drawProfileStudy(
       ctx,
       profileSource,
@@ -493,10 +532,6 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
       modeFlags.showPointOfControl,
       modeFlags.showValueArea,
     );
-  }
-
-  if (modeFlags.showSessionLevels && marketContext?.session) {
-    drawSessionLevels(ctx, marketContext, chartW, p2y, chartH, rowSize, settings);
   }
 
   for (let vi = 0; vi < visible.length; vi += 1) {
@@ -533,4 +568,5 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
 
   drawTimeAxis(ctx, visible, startIdx, chartW, chartH, state, i2x, PRICE_AXIS_W, modeFlags);
   drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, PRICE_AXIS_W);
+  state.needsRedraw = false;
 }

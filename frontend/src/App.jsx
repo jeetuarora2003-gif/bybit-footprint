@@ -13,8 +13,8 @@ import {
   DEFAULT_CHART_SETTINGS,
   DEFAULT_FEATURES,
 } from "./components/chart/modeRules";
+import { normalizeTimeframe } from "./market/aggregate";
 import { buildOrderflowReading } from "./utils/orderflow";
-import { buildCandleContext, buildMarketContext } from "./utils/marketContext";
 import "./App.css";
 
 const REPLAY_SPEEDS = [1, 2, 4, 8];
@@ -38,7 +38,10 @@ export default function App() {
   const activeFeatures = useMemo(() => new Set(activeFeatureArr), [activeFeatureArr]);
 
   const updateSetting = (key, value) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSettings((prev) => ({
+      ...prev,
+      [key]: key === "timeframe" ? normalizeTimeframe(value) : value,
+    }));
   };
 
   const toggleFeature = (key) => {
@@ -104,24 +107,21 @@ export default function App() {
   };
   const infoCandle = crosshairData ?? liveCandle;
   const readingContext = useMemo(
-    () => buildMarketContext(allCandles, infoCandle, resolvedSettings),
-    [allCandles, infoCandle, resolvedSettings],
-  );
-  const latestContext = useMemo(
-    () => buildMarketContext(allCandles, liveCandle || allCandles.at(-1), resolvedSettings),
-    [allCandles, liveCandle, resolvedSettings],
+    () => buildSimpleReadingContext(allCandles, infoCandle),
+    [allCandles, infoCandle],
   );
   const chartAnnotations = useMemo(() => {
     if (!allCandles.length) return [];
-    const start = Math.max(0, allCandles.length - 240);
+    const start = Math.max(0, allCandles.length - 96);
     const annotations = [];
     for (let index = start; index < allCandles.length; index += 1) {
       const candle = allCandles[index];
-      const context = buildCandleContext(allCandles, index, resolvedSettings);
+      const context = buildSimpleReadingContext(allCandles, candle);
       const reading = buildOrderflowReading(candle, context);
       if (!reading?.setup) continue;
-      const minimumScore = context.market?.scoreConfig?.calloutMinimumScore ?? 7;
+      const minimumScore = 7;
       if (reading.setup.qualityScore < minimumScore) continue;
+      if (reading.setup.confirmationState !== "confirmed") continue;
       annotations.push({
         candle_open_time: candle.candle_open_time,
         price: reading.setup.price,
@@ -132,7 +132,7 @@ export default function App() {
       });
     }
     return annotations.slice(-48);
-  }, [allCandles, resolvedSettings]);
+  }, [allCandles]);
 
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
@@ -187,7 +187,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Toolbar
+        <Toolbar
         settings={resolvedSettings}
         updateSetting={updateSetting}
         status={status}
@@ -204,7 +204,7 @@ export default function App() {
         onStepReplay={stepReplay}
         onCycleReplaySpeed={cycleReplaySpeed}
       />
-      <InfoBar candle={infoCandle} settings={resolvedSettings} instrument={instrument} marketContext={readingContext.market} />
+      <InfoBar candle={infoCandle} settings={resolvedSettings} instrument={instrument} />
       <OrderflowReading candle={infoCandle} context={readingContext} />
       <div className="app-body">
         <Sidebar
@@ -220,7 +220,6 @@ export default function App() {
               depthHistory={depthHistory}
               settings={resolvedSettings}
               activeFeatures={activeFeatures}
-              marketContext={latestContext.market}
               annotations={chartAnnotations}
               onCrosshairMove={setCrosshairData}
               viewCommand={viewCommand}
@@ -237,7 +236,6 @@ export default function App() {
         onAutoFitView={() => issueViewCommand("fit")}
         settings={resolvedSettings}
         instrument={instrument}
-        marketContext={latestContext.market}
         replay={replay}
         onStartReplay={startReplay}
         onStopReplay={stopReplay}
@@ -247,4 +245,34 @@ export default function App() {
       />
     </div>
   );
+}
+
+function buildSimpleReadingContext(allCandles, activeCandle) {
+  if (!activeCandle?.candle_open_time || allCandles.length === 0) {
+    return {
+      previousCandle: null,
+      nextCandle: null,
+      recentCandles: [],
+      futureCandles: [],
+    };
+  }
+
+  let index = -1;
+  for (let cursor = allCandles.length - 1; cursor >= 0; cursor -= 1) {
+    if (allCandles[cursor]?.candle_open_time === activeCandle.candle_open_time) {
+      index = cursor;
+      break;
+    }
+  }
+
+  if (index < 0) {
+    index = allCandles.length - 1;
+  }
+
+  return {
+    previousCandle: index > 0 ? allCandles[index - 1] : null,
+    nextCandle: index + 1 < allCandles.length ? allCandles[index + 1] : null,
+    recentCandles: allCandles.slice(Math.max(0, index - 8), index),
+    futureCandles: allCandles.slice(index + 1, index + 3),
+  };
 }

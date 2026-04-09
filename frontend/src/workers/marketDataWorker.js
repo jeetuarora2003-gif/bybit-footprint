@@ -3,6 +3,7 @@ import {
   copyBars,
   frameOpenTime,
   mergeHistoryBars,
+  normalizeTimeframe,
   normalizeStoredBar,
   parseTickMultiplier,
   round6,
@@ -132,7 +133,7 @@ function createEngine() {
       defaultTicks: [1, 5, 10, 25, 50, 100],
     };
     state.baseRowSize = DEFAULT_ROW_SIZE;
-    state.timeframe = payload.timeframe || "1m";
+    state.timeframe = normalizeTimeframe(payload.timeframe || "1m");
     state.tickMultiplier = parseTickMultiplier(payload.tickSize);
     state.completedBars = [];
     state.aggregatedHistory = [];
@@ -191,7 +192,7 @@ function createEngine() {
   }
 
   function updateSettings(payload) {
-    state.timeframe = payload.timeframe || state.timeframe;
+    state.timeframe = normalizeTimeframe(payload.timeframe || state.timeframe);
     state.tickMultiplier = parseTickMultiplier(payload.tickSize);
     recomputeAggregatedHistory();
 
