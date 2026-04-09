@@ -59,6 +59,33 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.orderflow-reading__quality {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.orderflow-reading__quality--live {
+  color: #9ddbf7;
+  background: rgba(38, 166, 154, 0.14);
+}
+
+.orderflow-reading__quality--caution {
+  color: #ffe58f;
+  background: rgba(250, 204, 21, 0.14);
+}
+
+.orderflow-reading__quality--muted {
+  color: #cbd5e1;
+  background: rgba(107, 114, 128, 0.18);
+}
+
 .orderflow-reading__grade--bullish {
   color: #9ddbf7;
   background: rgba(66, 165, 245, 0.15);

@@ -9,6 +9,11 @@ export default function OrderflowReading({ candle, context }) {
       <div className="orderflow-reading__main">
         <div className="orderflow-reading__topline">
           <div className="orderflow-reading__kicker">Orderflow Reading</div>
+          {reading.qualityLabel && (
+            <span className={`orderflow-reading__quality orderflow-reading__quality--${reading.qualityTone || "muted"}`}>
+              {reading.qualityLabel}
+            </span>
+          )}
           {reading.gradeLabel && (
             <span className={`orderflow-reading__grade orderflow-reading__grade--${reading.gradeTone || "neutral"}`}>
               {reading.gradeLabel}

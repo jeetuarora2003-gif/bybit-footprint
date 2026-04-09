@@ -449,18 +449,58 @@ function describeDataQuality(candle, reliable) {
 
   if (reliable) {
     if (hasOI && hasBook) {
-      return "Live footprint from raw trades, live OI, and a visible orderbook snapshot."
+      return {
+        tier: "live_full",
+        label: "Live captured",
+        tone: "live",
+        chip: "Live captured",
+        row: "Live trades + live OI + visible orderbook",
+        detail: "This bar is built from captured live trades with live open interest and a visible orderbook snapshot.",
+        tradeable: true,
+      }
     }
     if (hasOI) {
-      return "Live footprint from raw trades with live OI, but limited visible book context on this bar."
+      return {
+        tier: "live_partial",
+        label: "Partial live",
+        tone: "caution",
+        chip: "Partial live",
+        row: "Live trades + live OI, but thin book context",
+        detail: "This bar has live trades and live open interest, but the visible book context is limited, so liquidity reads are weaker.",
+        tradeable: true,
+      }
     }
-    return "Live footprint from raw trades. OI has not populated yet on this bar."
+    return {
+      tier: "live_incomplete",
+      label: "Live incomplete",
+      tone: "caution",
+      chip: "OI pending",
+      row: "Live trades only, with OI still missing",
+      detail: "This bar is live, but open interest has not populated yet, so participation classification is incomplete.",
+      tradeable: false,
+    }
   }
 
   if (hasOI) {
-    return "History uses OHLC plus Bybit open-interest backfill. CVD, absorption, and imbalance are not reconstructed here."
+    return {
+      tier: "history_oi",
+      label: "Backfill + OI",
+      tone: "muted",
+      chip: "Backfill + OI",
+      row: "Historical OHLC with open-interest backfill only",
+      detail: "History here uses OHLC plus Bybit open-interest backfill. CVD, absorption, and imbalance are not reconstructed.",
+      tradeable: false,
+    }
   }
-  return "History-only bar. Wait for live capture or replay for full orderflow context."
+  return {
+    tier: "history_only",
+    label: "Backfill only",
+    tone: "muted",
+    chip: "Backfill only",
+    row: "Historical OHLC only, without true footprint reconstruction",
+    detail: "This is history-only data. Wait for live capture or replay before trusting orderflow reads here.",
+    tradeable: false,
+  }
 }
 
 function buildLocationContext(candle, recentCandles) {
@@ -948,7 +988,8 @@ function buildHistoryReading(candle, participation, liquidity, dataQuality) {
   if (liquidity?.row) {
     rows.push({ label: "Liquidity", value: liquidity.row })
   }
-  rows.push({ label: "Data", value: dataQuality })
+  rows.push({ label: "Quality", value: dataQuality.row })
+  rows.push({ label: "Why wait", value: "Backfill bars are for context only. Wait for live capture or replay before acting on footprint reads." })
 
   if (participation?.chips) {
     participation.chips.forEach((chip) => pushUnique(chips, chip))
@@ -956,20 +997,98 @@ function buildHistoryReading(candle, participation, liquidity, dataQuality) {
   if (liquidity?.chips) {
     liquidity.chips.forEach((chip) => pushUnique(chips, chip))
   }
-  pushUnique(chips, (Number(candle?.oi) || 0) > 0 ? "History OI" : "History only")
+  pushUnique(chips, dataQuality.chip)
+  pushUnique(chips, "No trade")
 
   return {
     tone: "muted",
-    gradeLabel: "",
+    gradeLabel: "No trade",
     gradeTone: "muted",
-    headline: participation?.headline || "Backfilled bar",
+    qualityLabel: dataQuality.label,
+    qualityTone: dataQuality.tone,
+    headline: "Backfill bar only",
     detail: appendSentence(
-      participation?.detail || "This bar is historical backfill, so CVD, absorption, and imbalance reads are not fully available here.",
-      liquidity?.shortDetail,
+      dataQuality.detail,
+      participation?.shortDetail || participation?.detail,
     ),
     chips: chips.slice(0, 6),
     rows: rows.slice(0, 6),
-    score: participation?.score || 0,
+    score: 0,
+    setup: null,
+  }
+}
+
+function shouldApproveSetup(setup, participation, dataQuality) {
+  if (!setup) return false
+  if (!dataQuality?.tradeable) return false
+  if (setup.confirmation?.state !== "confirmed") return false
+  if ((setup.qualityScore || 0) < 8) return false
+  if (Math.abs(participation?.score || 0) < 2) return false
+  return true
+}
+
+function buildNoTradeReason({ setup, participation, liquidity, dataQuality }) {
+  if (!dataQuality?.tradeable) {
+    return "Advanced orderflow reads are blocked until live capture is complete enough."
+  }
+  if (setup?.confirmation?.state === "pending") {
+    return "The trigger is forming, but the next bars have not confirmed it yet."
+  }
+  if (setup?.confirmation?.state === "failed") {
+    return "The trigger failed follow-through, so this bar should be treated as a pass."
+  }
+  if (setup && (setup.qualityScore || 0) < 8) {
+    return "The setup is real, but it is still below the elite-quality threshold."
+  }
+  if (Math.abs(participation?.score || 0) < 2) {
+    return "Participation is still mixed, so there is no clean initiative edge."
+  }
+  if (Math.abs(liquidity?.bias || 0) === 0) {
+    return "Resting liquidity is balanced, so the tape does not have enough extra edge yet."
+  }
+  return "Nothing here is strong enough to justify an advanced entry yet."
+}
+
+function buildNoTradeReading({
+  detail,
+  participation,
+  liquidity,
+  dataQuality,
+  setup,
+  chips,
+}) {
+  const rows = []
+  if (participation?.row) {
+    rows.push({ label: "Flow", value: participation.row })
+  }
+  if (liquidity?.row) {
+    rows.push({ label: "Liquidity", value: liquidity.row })
+  }
+  rows.push({ label: "Why wait", value: buildNoTradeReason({ setup, participation, liquidity, dataQuality }) })
+  rows.push({ label: "Quality", value: dataQuality.row })
+
+  pushUnique(chips, dataQuality.chip)
+  pushUnique(chips, "No trade")
+
+  return {
+    tone: dataQuality?.tradeable ? "neutral" : "muted",
+    gradeLabel: "No trade",
+    gradeTone: dataQuality?.tradeable ? "neutral" : "muted",
+    qualityLabel: dataQuality.label,
+    qualityTone: dataQuality.tone,
+    headline: dataQuality?.tradeable ? "No trade yet" : "Wait for better data",
+    detail: appendSentence(
+      appendSentence(
+        dataQuality?.tradeable
+          ? buildNoTradeReason({ setup, participation, liquidity, dataQuality })
+          : dataQuality.detail,
+        detail,
+      ),
+      liquidity?.shortDetail,
+    ),
+    chips: chips.slice(0, 7),
+    rows: rows.slice(0, 6),
+    score: 0,
     setup: null,
   }
 }
@@ -985,6 +1104,8 @@ export function buildOrderflowReading(candle, context) {
       chips: [],
       rows: [],
       score: 0,
+      qualityLabel: "",
+      qualityTone: "muted",
       setup: null,
     }
   }
@@ -1175,13 +1296,15 @@ export function buildOrderflowReading(candle, context) {
     }
   }
 
+  const approvedSetup = shouldApproveSetup(setup, participation, dataQuality)
+
   if (participation?.row) {
     rows.push({ label: "Flow", value: participation.row })
   }
   if (liquidity?.row) {
     rows.push({ label: "Liquidity", value: liquidity.row })
   }
-  rows.push({ label: "Data", value: dataQuality })
+  rows.push({ label: "Quality", value: dataQuality.row })
 
   const score = bullScore - bearScore
   const tone = setup
@@ -1191,6 +1314,17 @@ export function buildOrderflowReading(candle, context) {
       : score < -1
         ? "bearish"
         : "neutral"
+
+  if (!approvedSetup) {
+    return buildNoTradeReading({
+      detail,
+      participation,
+      liquidity,
+      dataQuality,
+      setup,
+      chips,
+    })
+  }
 
   if (!gradeLabel && tone !== "neutral") {
     gradeLabel = "Directional read"
@@ -1205,6 +1339,8 @@ export function buildOrderflowReading(candle, context) {
     tone,
     gradeLabel,
     gradeTone,
+    qualityLabel: dataQuality.label,
+    qualityTone: dataQuality.tone,
     headline,
     detail,
     chips: chips.slice(0, 7),
