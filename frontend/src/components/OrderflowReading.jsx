@@ -1,13 +1,20 @@
 import "./OrderflowReading.css";
 import { buildOrderflowReading } from "../utils/orderflow";
 
-export default function OrderflowReading({ candle, previousCandle }) {
-  const reading = buildOrderflowReading(candle, previousCandle);
+export default function OrderflowReading({ candle, context }) {
+  const reading = buildOrderflowReading(candle, context);
 
   return (
     <div className={`orderflow-reading orderflow-reading--${reading.tone}`}>
       <div className="orderflow-reading__main">
-        <div className="orderflow-reading__kicker">Orderflow Reading</div>
+        <div className="orderflow-reading__topline">
+          <div className="orderflow-reading__kicker">Orderflow Reading</div>
+          {reading.gradeLabel && (
+            <span className={`orderflow-reading__grade orderflow-reading__grade--${reading.gradeTone || "neutral"}`}>
+              {reading.gradeLabel}
+            </span>
+          )}
+        </div>
         <div className="orderflow-reading__headline">{reading.headline}</div>
         <div className="orderflow-reading__detail">{reading.detail}</div>
         {reading.rows?.length > 0 && (

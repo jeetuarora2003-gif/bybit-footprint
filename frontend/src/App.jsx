@@ -81,18 +81,34 @@ export default function App() {
     speed: replayUi.speed,
   };
   const infoCandle = crosshairData ?? liveCandle;
-  const previousInfoCandle = useMemo(() => {
-    if (!infoCandle?.candle_open_time || allCandles.length < 2) {
-      return null;
+  const readingContext = useMemo(() => {
+    if (!infoCandle?.candle_open_time || allCandles.length === 0) {
+      return {
+        previousCandle: null,
+        nextCandle: null,
+        recentCandles: [],
+        futureCandles: [],
+      };
     }
 
-    for (let index = allCandles.length - 1; index >= 0; index -= 1) {
-      if (allCandles[index]?.candle_open_time === infoCandle.candle_open_time) {
-        return index > 0 ? allCandles[index - 1] : null;
+    let index = -1;
+    for (let cursor = allCandles.length - 1; cursor >= 0; cursor -= 1) {
+      if (allCandles[cursor]?.candle_open_time === infoCandle.candle_open_time) {
+        index = cursor;
+        break;
       }
     }
 
-    return allCandles.at(-2) || null;
+    if (index < 0) {
+      index = allCandles.length - 1;
+    }
+
+    return {
+      previousCandle: index > 0 ? allCandles[index - 1] : null,
+      nextCandle: index + 1 < allCandles.length ? allCandles[index + 1] : null,
+      recentCandles: allCandles.slice(Math.max(0, index - 8), index),
+      futureCandles: allCandles.slice(index + 1, index + 3),
+    };
   }, [allCandles, infoCandle]);
 
   useEffect(() => {
@@ -164,7 +180,7 @@ export default function App() {
         onCycleReplaySpeed={cycleReplaySpeed}
       />
       <InfoBar candle={infoCandle} settings={resolvedSettings} />
-      <OrderflowReading candle={infoCandle} previousCandle={previousInfoCandle} />
+      <OrderflowReading candle={infoCandle} context={readingContext} />
       <div className="app-body">
         <Sidebar
           settings={resolvedSettings}
