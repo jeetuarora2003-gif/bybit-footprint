@@ -170,6 +170,7 @@ function createEngine() {
       state.tradeHistory = normalizeReplayTrades(cached.trades).slice(-MAX_REPLAY_TRADES);
       state.depthEvents = normalizeDepthEvents(cached.depthEvents).slice(-MAX_DEPTH_EVENTS);
       seedRuntimeFromHistory();
+      restoreRuntimeFromCache();
       recomputeAggregatedHistory();
       emitCaptureStats();
       emitFullSnapshot();
@@ -310,6 +311,89 @@ function createEngine() {
     state.bestBidSize = Number(lastBar.best_bid_size) || 0;
     state.bestAsk = Number(lastBar.best_ask) || 0;
     state.bestAskSize = Number(lastBar.best_ask_size) || 0;
+  }
+
+  function restoreRuntimeFromCache() {
+    restoreBookFromCache();
+    restoreLiveCandleFromTrades();
+  }
+
+  function restoreBookFromCache() {
+    const snapshotEvent = [...state.depthEvents].reverse().find((event) => event.kind === "snapshot");
+    if (snapshotEvent) {
+      state.bids = new Map();
+      state.asks = new Map();
+      applyDepthEventLevelsToMap(state.bids, snapshotEvent.bids);
+      applyDepthEventLevelsToMap(state.asks, snapshotEvent.asks);
+      state.bestBid = Number(snapshotEvent.best_bid) || 0;
+      state.bestBidSize = Number(snapshotEvent.best_bid_size) || 0;
+      state.bestAsk = Number(snapshotEvent.best_ask) || 0;
+      state.bestAskSize = Number(snapshotEvent.best_ask_size) || 0;
+      return;
+    }
+
+    const latestDepth = state.depthHistory.at(-1);
+    if (!latestDepth) return;
+
+    state.bids = new Map();
+    state.asks = new Map();
+    for (const level of latestDepth.bids || []) {
+      if ((Number(level?.price) || 0) > 0 && (Number(level?.size) || 0) > 0) {
+        state.bids.set(String(level.price), Number(level.size) || 0);
+      }
+    }
+    for (const level of latestDepth.asks || []) {
+      if ((Number(level?.price) || 0) > 0 && (Number(level?.size) || 0) > 0) {
+        state.asks.set(String(level.price), Number(level.size) || 0);
+      }
+    }
+    state.bestBid = Number(latestDepth.best_bid) || state.bestBid;
+    state.bestBidSize = Number(latestDepth.best_bid_size) || state.bestBidSize;
+    state.bestAsk = Number(latestDepth.best_ask) || state.bestAsk;
+    state.bestAskSize = Number(latestDepth.best_ask_size) || state.bestAskSize;
+  }
+
+  function restoreLiveCandleFromTrades() {
+    const latestTrade = state.tradeHistory.at(-1);
+    if (!latestTrade?.timestamp) return;
+
+    const lastClosedOpen = Number(state.completedBars.at(-1)?.candle_open_time) || 0;
+    const currentOpen = frameOpenTime(latestTrade.timestamp, "1m");
+    if (currentOpen <= lastClosedOpen) return;
+
+    const liveTrades = state.tradeHistory.filter((trade) => frameOpenTime(trade.timestamp, "1m") === currentOpen);
+    if (!liveTrades.length) return;
+
+    const lastClosedCvd = Number(state.completedBars.at(-1)?.cvd) || 0;
+    const lastClosedOI = Number(state.completedBars.at(-1)?.oi) || 0;
+
+    state.currentCandle = createLiveCandle(currentOpen);
+    state.cvd = lastClosedCvd;
+    state.prevBarOI = lastClosedOI;
+    state.currentOI = Number(liveTrades.at(-1)?.oi) || state.currentOI || lastClosedOI;
+
+    for (const trade of liveTrades) {
+      addTradeToCurrentCandle(
+        state.currentCandle,
+        Number(trade.price) || 0,
+        Number(trade.volume) || 0,
+        trade.side,
+        Number(trade.seq) || 0,
+        state.baseRowSize,
+      );
+      state.cvd = round6(state.cvd + (trade.side === "Buy" ? trade.volume : -trade.volume));
+      if ((Number(trade.oi) || 0) > 0) {
+        state.currentOI = Number(trade.oi) || state.currentOI;
+      }
+      if ((Number(trade.best_bid) || 0) > 0) {
+        state.bestBid = Number(trade.best_bid) || state.bestBid;
+        state.bestBidSize = Number(trade.best_bid_size) || state.bestBidSize;
+      }
+      if ((Number(trade.best_ask) || 0) > 0) {
+        state.bestAsk = Number(trade.best_ask) || state.bestAsk;
+        state.bestAskSize = Number(trade.best_ask_size) || state.bestAskSize;
+      }
+    }
   }
 
   function buildOneMinuteBar(candle, oiDelta) {

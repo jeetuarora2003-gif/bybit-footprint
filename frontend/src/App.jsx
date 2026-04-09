@@ -18,6 +18,8 @@ import { buildOrderflowReading } from "./utils/orderflow";
 import "./App.css";
 
 const REPLAY_SPEEDS = [1, 2, 4, 8];
+const SETTINGS_STORAGE_KEY = "bybit-footprint:settings:v1";
+const FEATURES_STORAGE_KEY = "bybit-footprint:features:v1";
 const REPLAY_BATCHES = {
   1: 10,
   2: 25,
@@ -26,9 +28,9 @@ const REPLAY_BATCHES = {
 };
 
 export default function App() {
-  const [settings, setSettings] = useState(DEFAULT_CHART_SETTINGS);
+  const [settings, setSettings] = useState(loadPersistedSettings);
   const [crosshairData, setCrosshairData] = useState(null);
-  const [activeFeatureArr, setActiveFeatureArr] = useState(DEFAULT_FEATURES);
+  const [activeFeatureArr, setActiveFeatureArr] = useState(loadPersistedFeatures);
   const [viewCommand, setViewCommand] = useState({ type: "reset", nonce: 1 });
   const [replayUi, setReplayUi] = useState({
     playing: false,
@@ -36,6 +38,24 @@ export default function App() {
   });
 
   const activeFeatures = useMemo(() => new Set(activeFeatureArr), [activeFeatureArr]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+      // Workspace persistence is best effort only.
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(FEATURES_STORAGE_KEY, JSON.stringify(activeFeatureArr));
+    } catch {
+      // Workspace persistence is best effort only.
+    }
+  }, [activeFeatureArr]);
 
   const updateSetting = (key, value) => {
     setSettings((prev) => ({
@@ -275,4 +295,36 @@ function buildSimpleReadingContext(allCandles, activeCandle) {
     recentCandles: allCandles.slice(Math.max(0, index - 8), index),
     futureCandles: allCandles.slice(index + 1, index + 3),
   };
+}
+
+function loadPersistedSettings() {
+  if (typeof window === "undefined") return DEFAULT_CHART_SETTINGS;
+
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_CHART_SETTINGS;
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_CHART_SETTINGS,
+      ...(parsed && typeof parsed === "object" ? parsed : {}),
+      timeframe: normalizeTimeframe(parsed?.timeframe || DEFAULT_CHART_SETTINGS.timeframe),
+    };
+  } catch {
+    return DEFAULT_CHART_SETTINGS;
+  }
+}
+
+function loadPersistedFeatures() {
+  if (typeof window === "undefined") return DEFAULT_FEATURES;
+
+  try {
+    const raw = window.localStorage.getItem(FEATURES_STORAGE_KEY);
+    if (!raw) return DEFAULT_FEATURES;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0
+      ? parsed.filter((value) => typeof value === "string")
+      : DEFAULT_FEATURES;
+  } catch {
+    return DEFAULT_FEATURES;
+  }
 }

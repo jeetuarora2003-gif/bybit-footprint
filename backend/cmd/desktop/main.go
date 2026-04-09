@@ -30,6 +30,7 @@ const (
 	maxOIPages       = 16
 	defaultSymbol    = "BTCUSDT"
 	defaultRowSize   = 0.1
+	defaultPort      = 19740
 )
 
 //go:embed web
@@ -157,7 +158,7 @@ type instrumentInfo struct {
 }
 
 func main() {
-	port := flag.Int("port", 0, "local port to use; 0 picks a free port")
+	port := flag.Int("port", defaultPort, "local port to use; default keeps desktop storage stable")
 	noOpen := flag.Bool("no-open", false, "disable automatically opening the app in a browser")
 	flag.Parse()
 
@@ -174,7 +175,23 @@ func main() {
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
-		log.Fatalf("listen: %v", err)
+		existingURL := fmt.Sprintf("http://127.0.0.1:%d", *port)
+		if *port > 0 && isHealthyDesktopInstance(existingURL) {
+			log.Printf("Bybit Footprint is already running at %s", existingURL)
+			if !*noOpen {
+				if openErr := openBrowser(existingURL); openErr != nil {
+					log.Printf("open browser: %v", openErr)
+				}
+			}
+			return
+		}
+
+		if *port == defaultPort {
+			listener, err = net.Listen("tcp", "127.0.0.1:0")
+		}
+		if err != nil {
+			log.Fatalf("listen: %v", err)
+		}
 	}
 
 	serverURL := "http://" + listener.Addr().String()
@@ -197,6 +214,16 @@ func main() {
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("serve: %v", err)
 	}
+}
+
+func isHealthyDesktopInstance(baseURL string) bool {
+	client := &http.Client{Timeout: 1200 * time.Millisecond}
+	resp, err := client.Get(baseURL + "/api/health")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func loadEmbeddedUI() (fs.FS, []byte, error) {
