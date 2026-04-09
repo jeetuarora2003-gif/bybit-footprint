@@ -65,40 +65,62 @@ function drawCVDPanel(canvas, candles) {
   const chartW = width - AXIS_W;
   if (candles.length < 2) return;
 
-  const values = candles.map((candle) => candle.cvd ?? 0);
-  let min = Math.min(...values);
-  let max = Math.max(...values);
+  const series = candles.map((candle) => {
+    const reliable = Number(candle?.orderflow_coverage ?? 0) >= 0.999;
+    const value = Number(candle?.cvd);
+    return reliable && Number.isFinite(value) ? value : null;
+  });
+  const validValues = series.filter((value) => Number.isFinite(value));
+  const firstReliableIndex = series.findIndex((value) => Number.isFinite(value));
+
+  if (validValues.length < 2) {
+    drawPanelMessage(ctx, chartW, height, "CVD starts after live trade capture");
+    return;
+  }
+
+  let min = Math.min(...validValues);
+  let max = Math.max(...validValues);
   if (min === max) {
-    min -= 1;
-    max += 1;
+    const padding = Math.max(Math.abs(max) * 0.002, 1);
+    min -= padding;
+    max += padding;
   }
   const range = max - min;
   const barW = Math.max(2, chartW / candles.length);
-  const zeroY = height - ((0 - min) / range) * height;
 
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, zeroY);
-  ctx.lineTo(chartW, zeroY);
-  ctx.stroke();
-
-  ctx.strokeStyle = BLUE;
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  for (let index = 0; index < candles.length; index += 1) {
-    const x = (index + 0.5) * barW;
-    const y = height - ((values[index] - min) / range) * (height - 4) - 2;
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  if (firstReliableIndex > 0) {
+    ctx.fillStyle = "rgba(107, 114, 128, 0.12)";
+    ctx.fillRect(0, 0, firstReliableIndex * barW, height);
+    ctx.fillStyle = TEXT;
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText("history backfill", 6, height - 4);
   }
-  ctx.stroke();
+
+  if (min < 0 && max > 0) {
+    const zeroY = height - ((0 - min) / range) * height;
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, zeroY);
+    ctx.lineTo(chartW, zeroY);
+    ctx.stroke();
+  }
+
+  drawGappedSeries(ctx, series, {
+    barW,
+    height,
+    min,
+    range,
+    color: BLUE,
+  });
 
   ctx.fillStyle = TEXT;
   ctx.font = "9px 'JetBrains Mono', monospace";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.fillText(fmtAxis(values.at(-1) ?? 0), chartW + 4, 2);
+  ctx.fillText(fmtAxis(validValues.at(-1) ?? 0), chartW + 4, 2);
 }
 
 function drawOIPanel(canvas, candles) {
@@ -120,34 +142,87 @@ function drawOIPanel(canvas, candles) {
   ctx.fillRect(0, 0, width, height);
 
   const chartW = width - AXIS_W;
-  const values = candles.map((candle) => candle.oi ?? 0).filter((value) => value > 0);
-  if (values.length < 2) return;
+  const series = buildOISeries(candles);
+  const values = series.filter((value) => Number.isFinite(value));
+  const firstObservedIndex = series.findIndex((value) => Number.isFinite(value));
+  if (values.length < 2) {
+    drawPanelMessage(ctx, chartW, height, "Waiting for OI samples");
+    return;
+  }
 
   let min = Math.min(...values);
   let max = Math.max(...values);
   if (min === max) {
-    min -= 1;
-    max += 1;
+    const padding = Math.max(Math.abs(max) * 0.0005, 1);
+    min -= padding;
+    max += padding;
   }
   const range = max - min;
-  const barW = chartW / values.length;
+  const barW = chartW / candles.length;
 
-  ctx.strokeStyle = YELLOW;
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  for (let index = 0; index < values.length; index += 1) {
-    const x = (index + 0.5) * barW;
-    const y = height - ((values[index] - min) / range) * (height - 4) - 2;
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  if (firstObservedIndex > 0) {
+    ctx.fillStyle = "rgba(107, 114, 128, 0.12)";
+    ctx.fillRect(0, 0, firstObservedIndex * barW, height);
   }
-  ctx.stroke();
+
+  drawGappedSeries(ctx, series, {
+    barW,
+    height,
+    min,
+    range,
+    color: YELLOW,
+  });
 
   ctx.fillStyle = TEXT;
   ctx.font = "9px 'JetBrains Mono', monospace";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillText(fmtAxis(values.at(-1) ?? 0), chartW + 4, 2);
+}
+
+function buildOISeries(candles) {
+  let lastKnown = null;
+  return candles.map((candle) => {
+    const value = Number(candle?.oi);
+    if (Number.isFinite(value) && value > 0) {
+      lastKnown = value;
+    }
+    return lastKnown;
+  });
+}
+
+function drawGappedSeries(ctx, values, { barW, height, min, range, color }) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+
+  let drawing = false;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (!Number.isFinite(value)) {
+      drawing = false;
+      continue;
+    }
+
+    const x = (index + 0.5) * barW;
+    const y = height - ((value - min) / range) * (height - 4) - 2;
+    if (!drawing) {
+      ctx.moveTo(x, y);
+      drawing = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+
+  ctx.stroke();
+}
+
+function drawPanelMessage(ctx, chartW, height, text) {
+  ctx.fillStyle = TEXT;
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, chartW / 2, height / 2);
 }
 
 function fmtAxis(value) {

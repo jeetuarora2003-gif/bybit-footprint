@@ -27,7 +27,7 @@ const SEEN_TRADE_ID_TRIM_BATCH = 1024;
 const HEARTBEAT_MS = 20_000;
 const RECONNECT_MS = 2_000;
 const BROADCAST_MS = 500;
-const BOOK_LEVELS = 15;
+const BOOK_LEVELS = 25;
 const REPLAY_WINDOW_MS = 30 * 60_000;
 const REPLAY_MIN_EVENTS = 50;
 const TRADE_PERSIST_BATCH = 128;
@@ -540,7 +540,8 @@ function createEngine() {
   }
 
   function handleTickerEnvelope(message) {
-    const oi = Number.parseFloat(message?.data?.openInterest);
+    const payload = Array.isArray(message?.data) ? message.data[0] : message?.data;
+    const oi = Number.parseFloat(payload?.openInterest);
     if (Number.isFinite(oi) && oi > 0) {
       state.currentOI = round6(oi);
     }

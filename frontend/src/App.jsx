@@ -81,6 +81,19 @@ export default function App() {
     speed: replayUi.speed,
   };
   const infoCandle = crosshairData ?? liveCandle;
+  const previousInfoCandle = useMemo(() => {
+    if (!infoCandle?.candle_open_time || allCandles.length < 2) {
+      return null;
+    }
+
+    for (let index = allCandles.length - 1; index >= 0; index -= 1) {
+      if (allCandles[index]?.candle_open_time === infoCandle.candle_open_time) {
+        return index > 0 ? allCandles[index - 1] : null;
+      }
+    }
+
+    return allCandles.at(-2) || null;
+  }, [allCandles, infoCandle]);
 
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
@@ -151,7 +164,7 @@ export default function App() {
         onCycleReplaySpeed={cycleReplaySpeed}
       />
       <InfoBar candle={infoCandle} settings={resolvedSettings} />
-      <OrderflowReading candle={infoCandle} />
+      <OrderflowReading candle={infoCandle} previousCandle={previousInfoCandle} />
       <div className="app-body">
         <Sidebar
           settings={resolvedSettings}

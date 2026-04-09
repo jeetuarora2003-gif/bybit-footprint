@@ -55,6 +55,34 @@
   max-width: 780px;
 }
 
+.orderflow-reading__rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.orderflow-reading__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.orderflow-reading__row-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.orderflow-reading__row-value {
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .orderflow-reading__chips {
   display: flex;
   align-items: center;
@@ -82,5 +110,9 @@
 
   .orderflow-reading__chips {
     justify-content: flex-start;
+  }
+
+  .orderflow-reading__rows {
+    gap: 10px;
   }
 }
