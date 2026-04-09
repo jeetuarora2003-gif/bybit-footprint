@@ -3,6 +3,7 @@ import useWebSocket from "./hooks/useWebSocket";
 import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
 import InfoBar from "./components/InfoBar";
+import OrderflowReading from "./components/OrderflowReading";
 import ChartCanvas from "./components/ChartCanvas";
 import SubPanels from "./components/SubPanels";
 import StatusBar from "./components/StatusBar";
@@ -150,6 +151,7 @@ export default function App() {
         onCycleReplaySpeed={cycleReplaySpeed}
       />
       <InfoBar candle={infoCandle} settings={resolvedSettings} />
+      <OrderflowReading candle={infoCandle} />
       <div className="app-body">
         <Sidebar
           settings={resolvedSettings}
