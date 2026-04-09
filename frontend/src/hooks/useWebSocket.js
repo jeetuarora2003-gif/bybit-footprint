@@ -104,11 +104,48 @@ function normalizeDepthSnapshot(snapshot) {
   };
 }
 
-export default function useWebSocket(timeframe = "1m", tickSize = "1") {
+function normalizeInstrument(payload, fallbackSymbol) {
+  if (!payload) {
+    return {
+      symbol: fallbackSymbol,
+      tickSize: 0.1,
+      qtyStep: 0,
+      minOrderQty: 0,
+      maxOrderQty: 0,
+      minNotionalValue: 0,
+      priceScale: 1,
+      defaultTicks: [1, 5, 10, 25, 50, 100],
+    };
+  }
+
+  return {
+    symbol: String(payload.symbol || fallbackSymbol || DEFAULT_SYMBOL).toUpperCase(),
+    baseCoin: String(payload.baseCoin || "").toUpperCase(),
+    quoteCoin: String(payload.quoteCoin || "").toUpperCase(),
+    tickSize: Number(payload.tickSize) || 0.1,
+    qtyStep: Number(payload.qtyStep) || 0,
+    minOrderQty: Number(payload.minOrderQty) || 0,
+    maxOrderQty: Number(payload.maxOrderQty) || 0,
+    minNotionalValue: Number(payload.minNotionalValue) || 0,
+    priceScale: Number(payload.priceScale) || 1,
+    defaultTicks: Array.isArray(payload.defaultTicks) && payload.defaultTicks.length
+      ? payload.defaultTicks.map((item) => Number(item) || 1).filter((item) => item > 0)
+      : [1, 5, 10, 25, 50, 100],
+  };
+}
+
+export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol = DEFAULT_SYMBOL } = {}) {
+  const normalizedSymbol = String(symbol || DEFAULT_SYMBOL).trim().toUpperCase() || DEFAULT_SYMBOL;
   const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
   const [depthHistory, setDepthHistory] = useState([]);
   const [status, setStatus] = useState("disconnected");
+  const [instrument, setInstrument] = useState(() => normalizeInstrument(null, normalizedSymbol));
+  const [captureStats, setCaptureStats] = useState({
+    tradeEvents: 0,
+    depthEvents: 0,
+    depthSnapshots: 0,
+  });
   const [replayState, setReplayState] = useState({
     available: false,
     enabled: false,
@@ -184,13 +221,21 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
           startTime: Number(payload?.startTime) || null,
           currentTime: Number(payload?.currentTime) || null,
         });
+      } else if (type === "instrument") {
+        setInstrument(normalizeInstrument(payload, normalizedSymbol));
+      } else if (type === "capture") {
+        setCaptureStats({
+          tradeEvents: Number(payload?.tradeEvents) || 0,
+          depthEvents: Number(payload?.depthEvents) || 0,
+          depthSnapshots: Number(payload?.depthSnapshots) || 0,
+        });
       }
     };
 
     worker.postMessage({
       type: "init",
       payload: {
-        symbol: DEFAULT_SYMBOL,
+        symbol: normalizedSymbol,
         proxyBase: resolveProxyBase(),
       },
     });
@@ -200,7 +245,7 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
       worker.terminate();
       workerRef.current = null;
     };
-  }, [appendDepthSnapshot, applyLiveUpdate, applySnapshot]);
+  }, [appendDepthSnapshot, applyLiveUpdate, applySnapshot, normalizedSymbol]);
 
   useEffect(() => {
     if (!workerRef.current) return;
@@ -233,6 +278,8 @@ export default function useWebSocket(timeframe = "1m", tickSize = "1") {
     liveCandle,
     depthHistory,
     status,
+    instrument,
+    captureStats,
     replayState,
     startReplay,
     stopReplay,

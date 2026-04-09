@@ -2,17 +2,26 @@ export const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars"
 export const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
 
 export const DEFAULT_CHART_SETTINGS = {
+  symbol: "BTCUSDT",
+  baseRowSize: 0.1,
   clusterMode: "bidAskProfile",
   candleStyle: "borderedCandle",
   dataView: "bidAsk",
   timeframe: "1m",
   tickSize: "1",
   profileStudy: "visible",
+  sessionMode: "utcDay",
+  sessionFilter: "balanced",
+  scoringPreset: "balanced",
+  calloutGrade: "B",
+  vwapMode: "session",
   showPOC: true,
   showVA: true,
   showCrosshair: true,
   showDOM: false,
   showHeatmap: false,
+  showCallouts: true,
+  showSessionLevels: true,
   vaPercent: 70,
   shadingMode: "adaptive",
   shortNumbers: true,
@@ -118,6 +127,7 @@ export function deriveModeFlags(settings, activeFeatures) {
     showAuctionMarkers: featureSet.has("hl"),
     showDOM: Boolean(settings.showDOM),
     showHeatmap: Boolean(settings.showHeatmap),
+    showSessionLevels: Boolean(settings.showSessionLevels),
     showPointOfControl: typeof behavior.showPointOfControl === "boolean"
       ? behavior.showPointOfControl
       : (Boolean(settings.showPOC) && !minimalProfileMode),

@@ -10,6 +10,7 @@ import {
 import {
   appendBar,
   appendDepthSnapshot,
+  appendDepthEvents,
   appendTrades,
   loadCacheSnapshot,
   replaceBars,
@@ -18,20 +19,25 @@ import { DEFAULT_STUDY_CONFIG } from "../market/studyConfig";
 
 const LIVE_WS_URL = "wss://stream.bybit.com/v5/public/linear";
 const DEFAULT_SYMBOL = "BTCUSDT";
-const BASE_ROW_SIZE = 0.1;
+const DEFAULT_ROW_SIZE = 0.1;
 const MAX_HISTORY_BARS = 5000;
 const MAX_DEPTH_HISTORY = 4000;
 const MAX_REPLAY_TRADES = 80_000;
+const MAX_DEPTH_EVENTS = 30_000;
 const MAX_SEEN_TRADE_IDS = 200_000;
 const SEEN_TRADE_ID_TRIM_BATCH = 1024;
 const HEARTBEAT_MS = 20_000;
 const RECONNECT_MS = 2_000;
-const BROADCAST_MS = 500;
-const BOOK_LEVELS = 25;
+const BROADCAST_MS = 250;
+const BOOK_LEVELS = 40;
+const ORDERBOOK_TOPIC_DEPTH = 200;
 const REPLAY_WINDOW_MS = 30 * 60_000;
 const REPLAY_MIN_EVENTS = 50;
 const TRADE_PERSIST_BATCH = 128;
 const TRADE_PERSIST_DEBOUNCE_MS = 1_000;
+const DEPTH_EVENT_PERSIST_BATCH = 64;
+const DEPTH_EVENT_PERSIST_DEBOUNCE_MS = 1_000;
+const DEPTH_EVENT_SNAPSHOT_INTERVAL_MS = 5_000;
 
 const engine = createEngine();
 
@@ -72,6 +78,12 @@ function createEngine() {
   const state = {
     symbol: DEFAULT_SYMBOL,
     proxyBase: "/api",
+    instrument: {
+      symbol: DEFAULT_SYMBOL,
+      tickSize: DEFAULT_ROW_SIZE,
+      defaultTicks: [1, 5, 10, 25, 50, 100],
+    },
+    baseRowSize: DEFAULT_ROW_SIZE,
     timeframe: "1m",
     tickMultiplier: 1,
     studyConfig: DEFAULT_STUDY_CONFIG,
@@ -84,9 +96,12 @@ function createEngine() {
     completedBars: [],
     aggregatedHistory: [],
     depthHistory: [],
+    depthEvents: [],
     tradeHistory: [],
     pendingTradePersist: [],
+    pendingDepthEventPersist: [],
     tradePersistTimeoutId: null,
+    depthEventPersistTimeoutId: null,
     currentCandle: null,
     cvd: 0,
     currentOI: 0,
@@ -97,7 +112,9 @@ function createEngine() {
     bestAskSize: 0,
     bids: new Map(),
     asks: new Map(),
+    lastDepthSnapshotPersistTs: 0,
     lastTradeSeq: 0,
+    lastDepthSeq: 0,
     seenTradeIds: [],
     seenTradeSet: new Set(),
     lastBroadcastLiveOpenTime: null,
@@ -109,13 +126,21 @@ function createEngine() {
     state.shuttingDown = false;
     state.symbol = payload.symbol || DEFAULT_SYMBOL;
     state.proxyBase = normalizeProxyBase(payload.proxyBase);
+    state.instrument = {
+      symbol: state.symbol,
+      tickSize: DEFAULT_ROW_SIZE,
+      defaultTicks: [1, 5, 10, 25, 50, 100],
+    };
+    state.baseRowSize = DEFAULT_ROW_SIZE;
     state.timeframe = payload.timeframe || "1m";
     state.tickMultiplier = parseTickMultiplier(payload.tickSize);
     state.completedBars = [];
     state.aggregatedHistory = [];
     state.depthHistory = [];
+    state.depthEvents = [];
     state.tradeHistory = [];
     state.pendingTradePersist = [];
+    state.pendingDepthEventPersist = [];
     state.currentCandle = null;
     state.cvd = 0;
     state.currentOI = 0;
@@ -126,32 +151,40 @@ function createEngine() {
     state.bestAskSize = 0;
     state.bids = new Map();
     state.asks = new Map();
+    state.lastDepthSnapshotPersistTs = 0;
     state.lastTradeSeq = 0;
+    state.lastDepthSeq = 0;
     state.seenTradeIds = [];
     state.seenTradeSet = new Set();
     state.lastBroadcastLiveOpenTime = null;
     state.replay = createReplayState();
     state.status = "loading";
     emitStatus();
+    emitInstrument();
 
     try {
-      const cached = await loadCacheSnapshot();
+      const cached = await loadCacheSnapshot(state.symbol);
       state.completedBars = mergeHistoryBars([], cached.bars).slice(-MAX_HISTORY_BARS);
       state.depthHistory = normalizeDepthSnapshots(cached.depth).slice(-MAX_DEPTH_HISTORY);
       state.tradeHistory = normalizeReplayTrades(cached.trades).slice(-MAX_REPLAY_TRADES);
+      state.depthEvents = normalizeDepthEvents(cached.depthEvents).slice(-MAX_DEPTH_EVENTS);
       seedRuntimeFromHistory();
       recomputeAggregatedHistory();
+      emitCaptureStats();
       emitFullSnapshot();
       emitReplayState();
     } catch {
       state.completedBars = [];
       state.depthHistory = [];
       state.tradeHistory = [];
+      state.depthEvents = [];
       state.aggregatedHistory = [];
+      emitCaptureStats();
       emitFullSnapshot();
       emitReplayState();
     }
 
+    void hydrateInstrument();
     connect();
     startBroadcastLoop();
     void hydrateHistoryFromProxy();
@@ -188,12 +221,19 @@ function createEngine() {
       clearTimeout(state.tradePersistTimeoutId);
       state.tradePersistTimeoutId = null;
     }
+    if (state.depthEventPersistTimeoutId) {
+      clearTimeout(state.depthEventPersistTimeoutId);
+      state.depthEventPersistTimeoutId = null;
+    }
     if (state.ws) {
       state.ws.close();
       state.ws = null;
     }
     if (state.pendingTradePersist.length > 0) {
       void flushPendingTrades();
+    }
+    if (state.pendingDepthEventPersist.length > 0) {
+      void flushPendingDepthEvents();
     }
   }
 
@@ -213,7 +253,7 @@ function createEngine() {
         seedRuntimeFromHistory();
       }
       recomputeAggregatedHistory();
-      await replaceBars(state.completedBars, MAX_HISTORY_BARS);
+      await replaceBars(state.completedBars, MAX_HISTORY_BARS, state.symbol);
       if (state.replay.enabled && state.replay.startMinuteOpen) {
         restartReplay(state.replay.startMinuteOpen, state.replay.cursor);
         return;
@@ -221,6 +261,36 @@ function createEngine() {
       emitFullSnapshot();
     } catch {
       // Live data can proceed even if the proxy is unavailable.
+    }
+  }
+
+  async function hydrateInstrument() {
+    try {
+      const response = await fetch(`${state.proxyBase}/instrument?symbol=${encodeURIComponent(state.symbol)}`);
+      if (!response.ok) {
+        emitInstrument();
+        return;
+      }
+      const payload = await response.json();
+      state.instrument = normalizeInstrument(payload, state.symbol);
+      state.baseRowSize = state.instrument.tickSize;
+      if (state.completedBars.length > 0) {
+        state.completedBars = state.completedBars.map((bar) => ({
+          ...bar,
+          row_size: state.baseRowSize,
+        }));
+      }
+      if (state.depthHistory.length > 0) {
+        state.depthHistory = state.depthHistory.map((snapshot) => ({
+          ...snapshot,
+          row_size: state.baseRowSize,
+        }));
+      }
+      recomputeAggregatedHistory();
+      emitInstrument();
+      emitFullSnapshot();
+    } catch {
+      emitInstrument();
     }
   }
 
@@ -244,7 +314,7 @@ function createEngine() {
   function buildOneMinuteBar(candle, oiDelta) {
     const clusters = [...candle.buckets.entries()]
       .map(([bucketIndex, bucket]) => ({
-        price: round6(bucketIndex * BASE_ROW_SIZE),
+        price: round6(bucketIndex * state.baseRowSize),
         buyVol: round6(bucket.buyVol),
         sellVol: round6(bucket.sellVol),
         delta: round6(bucket.buyVol - bucket.sellVol),
@@ -266,7 +336,7 @@ function createEngine() {
       high: round6(candle.high),
       low: round6(candle.low),
       close: round6(candle.close),
-      row_size: BASE_ROW_SIZE,
+      row_size: state.baseRowSize,
       clusters,
       candle_delta: round6(candle.delta),
       cvd: round6(state.cvd),
@@ -316,6 +386,19 @@ function createEngine() {
     }
   }
 
+  function applyDepthEventLevelsToMap(target, levels) {
+    for (const level of levels || []) {
+      const price = String(level?.price ?? "");
+      const size = Number(level?.size) || 0;
+      if (!price) continue;
+      if (size > 0) {
+        target.set(price, size);
+      } else {
+        target.delete(price);
+      }
+    }
+  }
+
   function topLevels(bookMap, descending, limit) {
     return [...bookMap.entries()]
       .map(([price, size]) => ({
@@ -350,7 +433,7 @@ function createEngine() {
         op: "subscribe",
         args: [
           `publicTrade.${state.symbol}`,
-          `orderbook.50.${state.symbol}`,
+          `orderbook.${ORDERBOOK_TOPIC_DEPTH}.${state.symbol}`,
           `tickers.${state.symbol}`,
         ],
       }));
@@ -393,7 +476,7 @@ function createEngine() {
         if (state.depthHistory.length > MAX_DEPTH_HISTORY) {
           state.depthHistory = state.depthHistory.slice(-MAX_DEPTH_HISTORY);
         }
-        void appendDepthSnapshot(depthSnapshot, MAX_DEPTH_HISTORY);
+        void appendDepthSnapshot(depthSnapshot, MAX_DEPTH_HISTORY, state.symbol);
         if (!state.replay.enabled) {
           postMessage({
             type: "depth",
@@ -496,7 +579,7 @@ function createEngine() {
       rotateCurrentCandle(openTime);
     }
 
-    addTradeToCurrentCandle(state.currentCandle, price, volume, side, seq);
+    addTradeToCurrentCandle(state.currentCandle, price, volume, side, seq, state.baseRowSize);
     state.cvd = round6(state.cvd + (side === "Buy" ? volume : -volume));
   }
 
@@ -509,7 +592,7 @@ function createEngine() {
         state.completedBars = state.completedBars.slice(-MAX_HISTORY_BARS);
       }
       recomputeAggregatedHistory();
-      void appendBar(closedBar, MAX_HISTORY_BARS);
+      void appendBar(closedBar, MAX_HISTORY_BARS, state.symbol);
     } else if (state.currentCandle) {
       state.prevBarOI = state.currentOI;
     }
@@ -521,8 +604,12 @@ function createEngine() {
     const book = message?.data || {};
     const bids = Array.isArray(book?.b) ? book.b : [];
     const asks = Array.isArray(book?.a) ? book.a : [];
+    const timestamp = Number(message?.cts) || Number(message?.ts) || Date.now();
+    const seq = Number(book?.seq) || 0;
+    const updateId = Number(book?.u) || 0;
+    const isSnapshot = message?.type === "snapshot" || Number(book?.u) === 1;
 
-    if (message?.type === "snapshot" || Number(book?.u) === 1) {
+    if (isSnapshot) {
       state.bids = new Map();
       state.asks = new Map();
       applyBookLevels(state.bids, bids, true);
@@ -537,6 +624,25 @@ function createEngine() {
     state.bestBidSize = best.bestBidSize;
     state.bestAsk = best.bestAsk;
     state.bestAskSize = best.bestAskSize;
+
+    recordDepthEvent({
+      event_id: buildDepthEventId({
+        timestamp,
+        seq,
+        updateId,
+        kind: isSnapshot ? "snapshot" : "delta",
+      }),
+      timestamp,
+      seq,
+      update_id: updateId,
+      kind: isSnapshot ? "snapshot" : "delta",
+      best_bid: round6(state.bestBid),
+      best_bid_size: round6(state.bestBidSize),
+      best_ask: round6(state.bestAsk),
+      best_ask_size: round6(state.bestAskSize),
+      bids: normalizeDepthEventLevels(bids),
+      asks: normalizeDepthEventLevels(asks),
+    });
   }
 
   function handleTickerEnvelope(message) {
@@ -587,7 +693,7 @@ function createEngine() {
     }
     return {
       timestamp: Date.now(),
-      row_size: BASE_ROW_SIZE,
+      row_size: state.baseRowSize,
       best_bid: state.bestBid,
       best_bid_size: state.bestBidSize,
       best_ask: state.bestAsk,
@@ -619,6 +725,7 @@ function createEngine() {
     if (!state.replay.enabled) {
       emitReplayState();
     }
+    emitCaptureStats();
   }
 
   async function flushPendingTrades() {
@@ -629,7 +736,75 @@ function createEngine() {
       state.tradePersistTimeoutId = null;
     }
     try {
-      await appendTrades(batch, MAX_REPLAY_TRADES);
+      await appendTrades(batch, MAX_REPLAY_TRADES, state.symbol);
+    } catch {
+      // Cache failures should not interrupt the live engine.
+    }
+  }
+
+  function recordDepthEvent(event) {
+    const normalized = normalizeDepthEvent(event);
+    if (!normalized?.event_id || !normalized.timestamp) return;
+
+    state.depthEvents.push(normalized);
+    if (state.depthEvents.length > MAX_DEPTH_EVENTS) {
+      state.depthEvents = state.depthEvents.slice(-MAX_DEPTH_EVENTS);
+    }
+    state.lastDepthSeq = Math.max(state.lastDepthSeq, normalized.seq || 0);
+
+    const persistBatch = [normalized];
+    if (
+      normalized.kind === "delta"
+      && normalized.timestamp - state.lastDepthSnapshotPersistTs >= DEPTH_EVENT_SNAPSHOT_INTERVAL_MS
+    ) {
+      state.lastDepthSnapshotPersistTs = normalized.timestamp;
+      const snapshotEvent = {
+        ...normalized,
+        kind: "snapshot",
+        event_id: buildDepthEventId({
+          timestamp: normalized.timestamp,
+          seq: normalized.seq,
+          updateId: normalized.update_id,
+          kind: "snapshot",
+        }),
+        bids: topLevels(state.bids, true, BOOK_LEVELS),
+        asks: topLevels(state.asks, false, BOOK_LEVELS),
+        best_bid: round6(state.bestBid),
+        best_bid_size: round6(state.bestBidSize),
+        best_ask: round6(state.bestAsk),
+        best_ask_size: round6(state.bestAskSize),
+      };
+      state.depthEvents.push(snapshotEvent);
+      if (state.depthEvents.length > MAX_DEPTH_EVENTS) {
+        state.depthEvents = state.depthEvents.slice(-MAX_DEPTH_EVENTS);
+      }
+      persistBatch.push(snapshotEvent);
+    } else if (normalized.kind === "snapshot") {
+      state.lastDepthSnapshotPersistTs = normalized.timestamp;
+    }
+
+    state.pendingDepthEventPersist.push(...persistBatch);
+    if (state.pendingDepthEventPersist.length >= DEPTH_EVENT_PERSIST_BATCH) {
+      void flushPendingDepthEvents();
+    } else if (!state.depthEventPersistTimeoutId) {
+      state.depthEventPersistTimeoutId = setTimeout(() => {
+        state.depthEventPersistTimeoutId = null;
+        void flushPendingDepthEvents();
+      }, DEPTH_EVENT_PERSIST_DEBOUNCE_MS);
+    }
+
+    emitCaptureStats();
+  }
+
+  async function flushPendingDepthEvents() {
+    if (state.pendingDepthEventPersist.length === 0) return;
+    const batch = state.pendingDepthEventPersist.splice(0, state.pendingDepthEventPersist.length);
+    if (state.depthEventPersistTimeoutId) {
+      clearTimeout(state.depthEventPersistTimeoutId);
+      state.depthEventPersistTimeoutId = null;
+    }
+    try {
+      await appendDepthEvents(batch, MAX_DEPTH_EVENTS, state.symbol);
     } catch {
       // Cache failures should not interrupt the live engine.
     }
@@ -688,9 +863,7 @@ function createEngine() {
       bar.candle_open_time >= replayFrameStart && bar.candle_open_time < startMinuteOpen
     ));
     const trades = state.tradeHistory.filter((trade) => trade.timestamp >= startMinuteOpen);
-    const depthSource = state.depthHistory
-      .filter((snapshot) => snapshot.timestamp >= replayFrameStart)
-      .map(copyDepthSnapshot);
+    const depthSource = buildReplayDepthSource(replayFrameStart);
 
     state.replay = {
       enabled: trades.length >= REPLAY_MIN_EVENTS,
@@ -720,6 +893,65 @@ function createEngine() {
       depthHistory: [],
       currentDepth: null,
     };
+  }
+
+  function buildReplayDepthSource(startTimestamp) {
+    const fallback = state.depthHistory
+      .filter((snapshot) => snapshot.timestamp >= startTimestamp)
+      .map(copyDepthSnapshot);
+
+    if (!state.depthEvents.length) {
+      return fallback;
+    }
+
+    let snapshotIndex = -1;
+    for (let index = state.depthEvents.length - 1; index >= 0; index -= 1) {
+      const event = state.depthEvents[index];
+      if (event.timestamp <= startTimestamp && event.kind === "snapshot") {
+        snapshotIndex = index;
+        break;
+      }
+    }
+    if (snapshotIndex < 0) {
+      snapshotIndex = state.depthEvents.findIndex((event) => event.kind === "snapshot");
+    }
+    if (snapshotIndex < 0) {
+      return fallback;
+    }
+
+    const bids = new Map();
+    const asks = new Map();
+    const source = [];
+
+    for (let index = snapshotIndex; index < state.depthEvents.length; index += 1) {
+      const event = state.depthEvents[index];
+      if (event.kind === "snapshot") {
+        bids.clear();
+        asks.clear();
+        applyDepthEventLevelsToMap(bids, event.bids);
+        applyDepthEventLevelsToMap(asks, event.asks);
+      } else {
+        applyDepthEventLevelsToMap(bids, event.bids);
+        applyDepthEventLevelsToMap(asks, event.asks);
+      }
+
+      if (event.timestamp < startTimestamp) {
+        continue;
+      }
+
+      source.push({
+        timestamp: event.timestamp,
+        row_size: state.baseRowSize,
+        best_bid: event.best_bid,
+        best_bid_size: event.best_bid_size,
+        best_ask: event.best_ask,
+        best_ask_size: event.best_ask_size,
+        bids: topLevels(bids, true, BOOK_LEVELS),
+        asks: topLevels(asks, false, BOOK_LEVELS),
+      });
+    }
+
+    return source.length ? source : fallback;
   }
 
   function rebuildReplayToCursor(targetCursor) {
@@ -787,7 +1019,7 @@ function createEngine() {
       replay.bestAskSize = trade.best_ask_size;
     }
 
-    addTradeToCurrentCandle(replay.currentCandle, trade.price, trade.volume, trade.side, trade.seq);
+    addTradeToCurrentCandle(replay.currentCandle, trade.price, trade.volume, trade.side, trade.seq, state.baseRowSize);
     replay.currentCvd = round6(replay.currentCvd + (trade.side === "Buy" ? trade.volume : -trade.volume));
     replay.currentTime = trade.timestamp;
   }
@@ -812,7 +1044,7 @@ function createEngine() {
     const replay = state.replay;
     const clusters = [...candle.buckets.entries()]
       .map(([bucketIndex, bucket]) => ({
-        price: round6(bucketIndex * BASE_ROW_SIZE),
+        price: round6(bucketIndex * state.baseRowSize),
         buyVol: round6(bucket.buyVol),
         sellVol: round6(bucket.sellVol),
         delta: round6(bucket.buyVol - bucket.sellVol),
@@ -831,7 +1063,7 @@ function createEngine() {
       high: round6(candle.high),
       low: round6(candle.low),
       close: round6(candle.close),
-      row_size: BASE_ROW_SIZE,
+      row_size: state.baseRowSize,
       clusters,
       candle_delta: round6(candle.delta),
       cvd: round6(replay.currentCvd),
@@ -916,6 +1148,24 @@ function createEngine() {
     postMessage({
       type: "status",
       payload: state.status,
+    });
+  }
+
+  function emitInstrument() {
+    postMessage({
+      type: "instrument",
+      payload: state.instrument,
+    });
+  }
+
+  function emitCaptureStats() {
+    postMessage({
+      type: "capture",
+      payload: {
+        tradeEvents: state.tradeHistory.length,
+        depthEvents: state.depthEvents.length,
+        depthSnapshots: state.depthHistory.length,
+      },
     });
   }
 
@@ -1030,6 +1280,23 @@ function normalizeProxyBase(proxyBase) {
   return proxyBase.endsWith("/") ? proxyBase.slice(0, -1) : proxyBase;
 }
 
+function normalizeInstrument(payload, fallbackSymbol) {
+  return {
+    symbol: String(payload?.symbol || fallbackSymbol || DEFAULT_SYMBOL).toUpperCase(),
+    baseCoin: String(payload?.baseCoin || "").toUpperCase(),
+    quoteCoin: String(payload?.quoteCoin || "").toUpperCase(),
+    tickSize: Number(payload?.tickSize) || DEFAULT_ROW_SIZE,
+    qtyStep: Number(payload?.qtyStep) || 0,
+    minOrderQty: Number(payload?.minOrderQty) || 0,
+    maxOrderQty: Number(payload?.maxOrderQty) || 0,
+    minNotionalValue: Number(payload?.minNotionalValue) || 0,
+    priceScale: Number(payload?.priceScale) || 1,
+    defaultTicks: Array.isArray(payload?.defaultTicks) && payload.defaultTicks.length
+      ? payload.defaultTicks.map((item) => Number(item) || 1).filter((item) => item > 0)
+      : [1, 5, 10, 25, 50, 100],
+  };
+}
+
 function buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }) {
   const paddedTime = String(timestamp || 0).padStart(16, "0");
   const paddedSeq = String(seq || 0).padStart(12, "0");
@@ -1037,6 +1304,13 @@ function buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }) {
     return `${paddedTime}:${paddedSeq}:${tradeId}`;
   }
   return `${paddedTime}:${paddedSeq}:${side}:${round6(price)}:${round6(volume)}`;
+}
+
+function buildDepthEventId({ timestamp, seq, updateId, kind }) {
+  const paddedTime = String(timestamp || 0).padStart(16, "0");
+  const paddedSeq = String(seq || 0).padStart(12, "0");
+  const paddedUpdate = String(updateId || 0).padStart(12, "0");
+  return `${paddedTime}:${paddedSeq}:${paddedUpdate}:${kind || "delta"}`;
 }
 
 function copyBookLevels(levels) {
@@ -1063,6 +1337,53 @@ function normalizeDepthSnapshots(items) {
   return (items || [])
     .map(copyDepthSnapshot)
     .filter((snapshot) => snapshot?.timestamp);
+}
+
+function normalizeDepthEventLevels(levels) {
+  return (levels || [])
+    .map((level) => ({
+      price: Number(level?.price ?? level?.[0]) || 0,
+      size: Number(level?.size ?? level?.[1]) || 0,
+    }))
+    .filter((level) => level.price > 0);
+}
+
+function normalizeDepthEvent(item) {
+  const depthEvent = {
+    event_id: typeof item?.event_id === "string" ? item.event_id : "",
+    timestamp: Number(item?.timestamp) || 0,
+    seq: Number(item?.seq) || 0,
+    update_id: Number(item?.update_id) || 0,
+    kind: item?.kind === "snapshot" ? "snapshot" : "delta",
+    best_bid: Number(item?.best_bid) || 0,
+    best_bid_size: Number(item?.best_bid_size) || 0,
+    best_ask: Number(item?.best_ask) || 0,
+    best_ask_size: Number(item?.best_ask_size) || 0,
+    bids: normalizeDepthEventLevels(item?.bids),
+    asks: normalizeDepthEventLevels(item?.asks),
+  };
+
+  if (!depthEvent.event_id && depthEvent.timestamp) {
+    depthEvent.event_id = buildDepthEventId({
+      timestamp: depthEvent.timestamp,
+      seq: depthEvent.seq,
+      updateId: depthEvent.update_id,
+      kind: depthEvent.kind,
+    });
+  }
+
+  return depthEvent;
+}
+
+function normalizeDepthEvents(items) {
+  return (items || [])
+    .map(normalizeDepthEvent)
+    .filter((event) => event.event_id && event.timestamp)
+    .sort((a, b) => {
+      const timestampDelta = a.timestamp - b.timestamp;
+      if (timestampDelta !== 0) return timestampDelta;
+      return a.seq - b.seq;
+    });
 }
 
 function normalizeReplayTrade(item) {
@@ -1128,7 +1449,7 @@ function createLiveCandle(openTime) {
   };
 }
 
-function addTradeToCurrentCandle(candle, price, volume, side, seq) {
+function addTradeToCurrentCandle(candle, price, volume, side, seq, rowSize = DEFAULT_ROW_SIZE) {
   if (!candle.hasTick) {
     candle.open = price;
     candle.high = price;
@@ -1141,7 +1462,7 @@ function addTradeToCurrentCandle(candle, price, volume, side, seq) {
   candle.close = price;
   candle.lastSeq = Math.max(candle.lastSeq, seq || 0);
 
-  const bucketIndex = Math.floor(price / BASE_ROW_SIZE);
+  const bucketIndex = Math.floor(price / Math.max(Number(rowSize) || DEFAULT_ROW_SIZE, 0.000001));
   const bucket = candle.buckets.get(bucketIndex) || {
     buyVol: 0,
     sellVol: 0,

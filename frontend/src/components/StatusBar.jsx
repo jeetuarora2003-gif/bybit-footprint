@@ -24,6 +24,8 @@ export default function StatusBar({
   onResetView,
   onAutoFitView,
   settings,
+  instrument,
+  marketContext,
   replay,
   onStartReplay,
   onStopReplay,
@@ -42,6 +44,8 @@ export default function StatusBar({
   const referenceCandle = crosshairData ?? liveCandle;
   const hasReliableOrderflow = Number(referenceCandle?.orderflow_coverage ?? 0) >= 0.999;
   const studySignals = summarizeStudySignals(referenceCandle).slice(0, 2);
+  const sessionQuality = marketContext?.session?.quality?.label || null;
+  const higherTimeframe = marketContext?.confluence?.row || null;
   const replayTime = replay?.enabled && liveCandle?.candle_open_time
     ? new Date(Number(liveCandle.candle_open_time)).toLocaleTimeString([], {
       hour: "2-digit",
@@ -90,6 +94,22 @@ export default function StatusBar({
         <span className="stb-info">
           Mode: {CLUSTER_LABELS[settings.clusterMode] ?? settings.clusterMode}
         </span>
+        <span className="stb-sep">|</span>
+        <span className="stb-info">
+          Symbol: {instrument?.symbol || settings.symbol || "-"}
+        </span>
+        {sessionQuality && (
+          <>
+            <span className="stb-sep">|</span>
+            <span className="stb-info">Session: {sessionQuality}</span>
+          </>
+        )}
+        {higherTimeframe && (
+          <>
+            <span className="stb-sep">|</span>
+            <span className="stb-info">HTF: {higherTimeframe}</span>
+          </>
+        )}
         {studySignals.length > 0 && (
           <>
             <span className="stb-sep">|</span>

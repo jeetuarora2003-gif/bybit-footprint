@@ -48,7 +48,8 @@ export const CHART_TF_MS = {
 
 export function getRowSize(settings) {
   const multiplier = Number.parseFloat(settings?.tickSize);
-  return BASE_TICK_SIZE * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
+  const baseSize = Number(settings?.baseRowSize) || BASE_TICK_SIZE;
+  return baseSize * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
 }
 
 export function frameDurationMs(timeframe, frameOpen) {

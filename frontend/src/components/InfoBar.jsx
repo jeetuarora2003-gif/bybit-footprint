@@ -19,14 +19,24 @@ const CLUSTER_LABELS = {
   deltaLadder: "Delta Ladder",
 };
 
-export default function InfoBar({ candle, settings }) {
+export default function InfoBar({ candle, settings, instrument, marketContext }) {
   const current = candle;
   const hasReliableOrderflow = Number(current?.orderflow_coverage ?? 0) >= 0.999;
   const imbalance = hasReliableOrderflow ? summarizeCandleImbalance(current) : null;
   const studySignals = hasReliableOrderflow ? summarizeStudySignals(current).slice(0, 3) : [];
+  const sessionQuality = marketContext?.session?.quality?.label || "-";
 
   return (
     <div className="info-bar">
+      <div className="ib-group">
+        <span className="ib-label">Sym</span>
+        <span className="ib-val">{instrument?.symbol || settings.symbol || "-"}</span>
+        <span className="ib-label">Tick</span>
+        <span className="ib-val">{settings.baseRowSize || instrument?.tickSize || "-"}</span>
+      </div>
+
+      <div className="ib-sep" />
+
       <div className="ib-group">
         <span className="ib-label">O</span>
         <span className="ib-val">{current ? formatPrice(current.open) : "-"}</span>
@@ -82,6 +92,13 @@ export default function InfoBar({ candle, settings }) {
       <div className="ib-group">
         <span className="ib-label">Signals</span>
         <span className="ib-val">{studySignals.length ? studySignals.join(" ") : "-"}</span>
+      </div>
+
+      <div className="ib-sep" />
+
+      <div className="ib-group">
+        <span className="ib-label">Session</span>
+        <span className="ib-val">{sessionQuality}</span>
       </div>
 
       <div className="ib-sep" />

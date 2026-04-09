@@ -113,6 +113,7 @@ function normalizeReadingContext(context) {
       nextCandle: null,
       recentCandles: [],
       futureCandles: [],
+      market: null,
     }
   }
 
@@ -122,6 +123,7 @@ function normalizeReadingContext(context) {
       nextCandle: null,
       recentCandles: [],
       futureCandles: [],
+      market: null,
     }
   }
 
@@ -134,6 +136,7 @@ function normalizeReadingContext(context) {
     nextCandle: context.nextCandle || futureCandles[0] || null,
     recentCandles: Array.isArray(context.recentCandles) ? context.recentCandles.filter(Boolean) : [],
     futureCandles,
+    market: context.market || null,
   }
 }
 
@@ -463,23 +466,36 @@ function describeDataQuality(candle, reliable) {
   return "History-only bar. Wait for live capture or replay for full orderflow context."
 }
 
-function buildLocationContext(candle, recentCandles) {
+function buildLocationContext(candle, recentCandles, market) {
   const currentHigh = Number(candle?.high) || 0
   const currentLow = Number(candle?.low) || 0
   const currentClose = Number(candle?.close) || 0
   const step = Math.max(Number(candle?.row_size) || 0.1, 0.1)
+  const session = market?.session || null
+  const selectedProfile = market?.profile?.selected || null
+  const nearbyLevels = Array.isArray(market?.nearbyLevels) ? market.nearbyLevels : []
+
+  const isNearLevel = (price, ticks = 2) => {
+    const numeric = Number(price)
+    if (!Number.isFinite(numeric) || numeric <= 0) return false
+    return Math.abs(currentClose - numeric) <= step * ticks
+      || Math.abs(currentHigh - numeric) <= step * ticks
+      || Math.abs(currentLow - numeric) <= step * ticks
+  }
 
   if (!recentCandles.length) {
     return {
-      hasContext: false,
+      hasContext: nearbyLevels.length > 0 || Boolean(session || selectedProfile),
       step,
       referenceHigh: currentHigh,
       referenceLow: currentLow,
       rangeMid: (currentHigh + currentLow) / 2,
-      nearHigh: false,
-      nearLow: false,
+      nearHigh: isNearLevel(session?.sessionHigh) || isNearLevel(session?.priorHigh) || isNearLevel(session?.openingRangeHigh) || isNearLevel(selectedProfile?.vah),
+      nearLow: isNearLevel(session?.sessionLow) || isNearLevel(session?.priorLow) || isNearLevel(session?.openingRangeLow) || isNearLevel(selectedProfile?.val),
       sweptHigh: false,
       sweptLow: false,
+      profileNearPOC: isNearLevel(selectedProfile?.poc, 3),
+      nearbyLevels,
       volumeSpike: false,
       averageVolume: Number(candle?.total_volume) || 0,
     }
@@ -492,17 +508,25 @@ function buildLocationContext(candle, recentCandles) {
   const referenceLow = lows.length ? Math.min(...lows) : currentLow
   const averageVolume = average(volumes) || Number(candle?.total_volume) || 0
   const rangeMid = (referenceHigh + referenceLow) / 2
+  const derivedNearHigh = currentHigh >= referenceHigh - step * 1.5
+  const derivedNearLow = currentLow <= referenceLow + step * 1.5
+  const profileNearHigh = isNearLevel(selectedProfile?.vah) || isNearLevel(session?.sessionHigh) || isNearLevel(session?.priorHigh) || isNearLevel(session?.openingRangeHigh)
+  const profileNearLow = isNearLevel(selectedProfile?.val) || isNearLevel(session?.sessionLow) || isNearLevel(session?.priorLow) || isNearLevel(session?.openingRangeLow)
 
   return {
-    hasContext: highs.length > 0 && lows.length > 0,
+    hasContext: (highs.length > 0 && lows.length > 0) || nearbyLevels.length > 0 || Boolean(session || selectedProfile),
     step,
     referenceHigh,
     referenceLow,
     rangeMid,
-    nearHigh: currentHigh >= referenceHigh - step * 1.5,
-    nearLow: currentLow <= referenceLow + step * 1.5,
-    sweptHigh: currentHigh >= referenceHigh + step * 0.75 && currentClose <= referenceHigh - step * 0.25,
-    sweptLow: currentLow <= referenceLow - step * 0.75 && currentClose >= referenceLow + step * 0.25,
+    nearHigh: derivedNearHigh || profileNearHigh,
+    nearLow: derivedNearLow || profileNearLow,
+    sweptHigh: (currentHigh >= referenceHigh + step * 0.75 && currentClose <= referenceHigh - step * 0.25)
+      || (session?.priorHigh ? currentHigh >= Number(session.priorHigh) + step * 0.5 && currentClose <= Number(session.priorHigh) - step * 0.25 : false),
+    sweptLow: (currentLow <= referenceLow - step * 0.75 && currentClose >= referenceLow + step * 0.25)
+      || (session?.priorLow ? currentLow <= Number(session.priorLow) - step * 0.5 && currentClose >= Number(session.priorLow) + step * 0.25 : false),
+    profileNearPOC: isNearLevel(selectedProfile?.poc, 3),
+    nearbyLevels,
     volumeSpike: averageVolume > 0
       ? (Number(candle?.total_volume) || 0) >= averageVolume * 1.25
       : (Number(candle?.total_volume) || 0) > 0,
@@ -628,10 +652,10 @@ function evaluateContinuationConfirmation(futureCandles, direction, candle, step
   }
 }
 
-function buildQualityLabel(score) {
-  if (score >= 9) return "A setup"
-  if (score >= 7) return "B setup"
-  if (score >= 5) return "C setup"
+function buildQualityLabel(score, thresholds) {
+  if (score >= (thresholds?.A ?? 9)) return "A setup"
+  if (score >= (thresholds?.B ?? 7)) return "B setup"
+  if (score >= (thresholds?.C ?? 5)) return "C setup"
   return "D setup"
 }
 
@@ -643,6 +667,7 @@ function buildQualityTone(direction, reliable) {
 }
 
 function buildSetupQuality({
+  scoreConfig,
   reliable,
   locationStrong,
   triggerStrong,
@@ -650,23 +675,58 @@ function buildSetupQuality({
   flowSupport,
   liquiditySupport,
   volumeSpike,
+  sessionSupport,
+  confluenceSupport,
+  profileSupport,
+  sessionFilter,
+  sessionQuality,
 }) {
+  const weights = scoreConfig?.weights || {
+    reliable: 2,
+    location: 2,
+    trigger: 2,
+    confirmation: 2,
+    flow: 1,
+    liquidity: 1,
+    volume: 1,
+    session: 1,
+    confluence: 1,
+    profile: 1,
+  }
   let score = 0
-  if (reliable) score += 2
-  if (locationStrong) score += 2
-  if (triggerStrong) score += 2
-  if (confirmation.state === "confirmed") score += 2
-  if (flowSupport) score += 1
-  if (liquiditySupport) score += 1
-  if (volumeSpike) score += 1
-  if (confirmation.state === "failed") score = Math.max(0, score - 2)
+  if (reliable) score += weights.reliable || 0
+  if (locationStrong) score += weights.location || 0
+  if (triggerStrong) score += weights.trigger || 0
+  if (confirmation.state === "confirmed") score += weights.confirmation || 0
+  if (flowSupport) score += weights.flow || 0
+  if (liquiditySupport) score += weights.liquidity || 0
+  if (volumeSpike) score += weights.volume || 0
+  if (sessionSupport) score += weights.session || 0
+  if (confluenceSupport) score += weights.confluence || 0
+  if (profileSupport) score += weights.profile || 0
+  if (confirmation.state === "failed") {
+    score = Math.max(0, score - (weights.confirmation || 2))
+  }
+
+  const bucket = sessionQuality?.bucket || "balanced"
+  if (sessionFilter === "strict" && ["poor", "chaotic", "history"].includes(bucket)) {
+    return 0
+  }
+  if (sessionFilter === "balanced") {
+    if (bucket === "poor") score = Math.max(0, score - 1)
+    if (bucket === "chaotic") score = Math.max(0, score - 2)
+    if (bucket === "history") score = Math.max(0, score - 3)
+  }
   return score
 }
 
 function buildSetupRows(setup) {
   return [
     { label: "Setup", value: setup.setupLabel },
+    ...(setup.locationLabel ? [{ label: "Location", value: setup.locationLabel }] : []),
     { label: "Confirmation", value: setup.confirmation.row },
+    ...(setup.environmentLabel ? [{ label: "Environment", value: setup.environmentLabel }] : []),
+    ...(setup.confluenceLabel ? [{ label: "HTF", value: setup.confluenceLabel }] : []),
     { label: "Risk", value: setup.invalidation },
     { label: "Target", value: setup.target },
   ]
@@ -680,10 +740,37 @@ function detectOrderflowSetup({
   liquidity,
   imbalance,
   reliable,
+  market,
 }) {
-  const location = buildLocationContext(candle, recentCandles)
+  const location = buildLocationContext(candle, recentCandles, market)
   if (!location.hasContext) return null
 
+  const sessionQuality = market?.session?.quality || null
+  const confluence = market?.confluence || null
+  const selectedProfile = market?.profile?.selected || null
+  const scoreConfig = market?.scoreConfig || null
+  const sessionFilter = market?.sessionFilter || "balanced"
+  const maxScore = scoreConfig?.maxScore || 11
+  const locationLabel = location.nearbyLevels?.length
+    ? location.nearbyLevels.map((level) => level.text).join(" | ")
+    : location.nearHigh
+      ? "Trading into local highs"
+      : location.nearLow
+        ? "Trading into local lows"
+        : ""
+  const environmentLabel = sessionQuality?.row || ""
+  const confluenceLabel = confluence?.row || ""
+  const bullishConfluence = (confluence?.directionBias || 0) >= 1
+  const bearishConfluence = (confluence?.directionBias || 0) <= -1
+  const sessionSupport = !sessionQuality || sessionQuality.score >= 1
+  const profileSupport = Boolean(
+    location.profileNearPOC
+    || (location.nearHigh && selectedProfile?.vah)
+    || (location.nearLow && selectedProfile?.val)
+  )
+  if (sessionFilter === "strict" && ["poor", "chaotic", "history"].includes(sessionQuality?.bucket)) {
+    return null
+  }
   const step = location.step
   const deltaThreshold = Math.max((Number(candle?.total_volume) || 0) * 0.15, location.averageVolume * 0.12, 1)
   const buyAggression = Boolean(
@@ -707,6 +794,7 @@ function detectOrderflowSetup({
       || Boolean(candle?.delta_divergence_bear || candle?.absorption_high)
     const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: true,
       triggerStrong: true,
@@ -714,15 +802,23 @@ function detectOrderflowSetup({
       flowSupport,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bearishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "short",
       setupLabel: "Bull trap short",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
       target: `Back inside range toward ${formatLevelPrice(location.rangeMid, step)}, then ${formatLevelPrice(location.referenceLow, step)}`,
       chips: ["Trap setup", "Fade breakout"],
@@ -742,6 +838,7 @@ function detectOrderflowSetup({
       || Boolean(candle?.delta_divergence_bull || candle?.absorption_low)
     const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: true,
       triggerStrong: true,
@@ -749,15 +846,23 @@ function detectOrderflowSetup({
       flowSupport,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bullishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "long",
       setupLabel: "Bear trap long",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
       target: `Back inside range toward ${formatLevelPrice(location.rangeMid, step)}, then ${formatLevelPrice(location.referenceHigh, step)}`,
       chips: ["Trap setup", "Fade breakdown"],
@@ -777,6 +882,7 @@ function detectOrderflowSetup({
       || Boolean(candle?.delta_divergence_bear)
     const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: true,
       triggerStrong: true,
@@ -784,15 +890,23 @@ function detectOrderflowSetup({
       flowSupport,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bearishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "short",
       setupLabel: "Resistance absorption short",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
       target: `Back away from resistance toward ${formatLevelPrice(location.rangeMid, step)}`,
       chips: ["Absorption", "Resistance defense"],
@@ -812,6 +926,7 @@ function detectOrderflowSetup({
       || Boolean(candle?.delta_divergence_bull)
     const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: true,
       triggerStrong: true,
@@ -819,15 +934,23 @@ function detectOrderflowSetup({
       flowSupport,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bullishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "long",
       setupLabel: "Support absorption long",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
       target: `Back away from support toward ${formatLevelPrice(location.rangeMid, step)}`,
       chips: ["Absorption", "Support defense"],
@@ -845,6 +968,7 @@ function detectOrderflowSetup({
     const confirmation = evaluateContinuationConfirmation(futureCandles, "long", candle, step)
     const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: location.nearHigh,
       triggerStrong: true,
@@ -852,15 +976,23 @@ function detectOrderflowSetup({
       flowSupport: true,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bullishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "long",
       setupLabel: "Stacked imbalance continuation long",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
       target: `Continuation through the high above ${formatLevelPrice(Number(candle?.high) || 0, step)}`,
       chips: ["Stacked imbalance", "Continuation"],
@@ -878,6 +1010,7 @@ function detectOrderflowSetup({
     const confirmation = evaluateContinuationConfirmation(futureCandles, "short", candle, step)
     const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: location.nearLow,
       triggerStrong: true,
@@ -885,15 +1018,23 @@ function detectOrderflowSetup({
       flowSupport: true,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bearishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "short",
       setupLabel: "Stacked imbalance continuation short",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
       target: `Continuation through the low below ${formatLevelPrice(Number(candle?.low) || 0, step)}`,
       chips: ["Stacked imbalance", "Continuation"],
@@ -911,6 +1052,7 @@ function detectOrderflowSetup({
     const confirmation = evaluateReversalConfirmation(futureCandles, "short", candle, step)
     const liquiditySupport = (liquidity?.bias || 0) <= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: true,
       triggerStrong: true,
@@ -918,15 +1060,23 @@ function detectOrderflowSetup({
       flowSupport: true,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bearishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "short",
       setupLabel: "Bearish divergence reversal",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("short", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Above ${formatLevelPrice((Number(candle?.high) || 0) + step * 0.5, step)}`,
       target: `Back into the prior range toward ${formatLevelPrice(location.rangeMid, step)}`,
       chips: ["Divergence", "Reversal"],
@@ -944,6 +1094,7 @@ function detectOrderflowSetup({
     const confirmation = evaluateReversalConfirmation(futureCandles, "long", candle, step)
     const liquiditySupport = (liquidity?.bias || 0) >= 0
     const qualityScore = buildSetupQuality({
+      scoreConfig,
       reliable,
       locationStrong: true,
       triggerStrong: true,
@@ -951,15 +1102,23 @@ function detectOrderflowSetup({
       flowSupport: true,
       liquiditySupport,
       volumeSpike: location.volumeSpike,
+      sessionSupport,
+      confluenceSupport: bullishConfluence,
+      profileSupport,
+      sessionFilter,
+      sessionQuality,
     })
 
     return {
       direction: "long",
       setupLabel: "Bullish divergence reversal",
-      gradeLabel: `${buildQualityLabel(qualityScore)} (${qualityScore}/11)`,
+      gradeLabel: `${buildQualityLabel(qualityScore, scoreConfig?.thresholds)} (${qualityScore}/${maxScore})`,
       gradeTone: buildQualityTone("long", reliable),
       qualityScore,
       confirmation,
+      locationLabel,
+      environmentLabel,
+      confluenceLabel,
       invalidation: `Below ${formatLevelPrice((Number(candle?.low) || 0) - step * 0.5, step)}`,
       target: `Back into the prior range toward ${formatLevelPrice(location.rangeMid, step)}`,
       chips: ["Divergence", "Reversal"],
@@ -976,7 +1135,7 @@ function detectOrderflowSetup({
   return null
 }
 
-function buildHistoryReading(candle, participation, liquidity, dataQuality) {
+function buildHistoryReading(candle, participation, liquidity, dataQuality, market) {
   const rows = []
   const chips = []
 
@@ -985,6 +1144,12 @@ function buildHistoryReading(candle, participation, liquidity, dataQuality) {
   }
   if (liquidity?.row) {
     rows.push({ label: "Liquidity", value: liquidity.row })
+  }
+  if (market?.session?.quality?.row) {
+    rows.push({ label: "Session", value: market.session.quality.row })
+  }
+  if (market?.confluence?.row) {
+    rows.push({ label: "HTF", value: market.confluence.row })
   }
   rows.push({ label: "Data", value: dataQuality })
 
@@ -1006,8 +1171,9 @@ function buildHistoryReading(candle, participation, liquidity, dataQuality) {
       liquidity?.shortDetail,
     ),
     chips: chips.slice(0, 6),
-    rows: rows.slice(0, 4),
+    rows: rows.slice(0, 6),
     score: participation?.score || 0,
+    setup: null,
   }
 }
 
@@ -1022,6 +1188,7 @@ export function buildOrderflowReading(candle, context) {
       chips: [],
       rows: [],
       score: 0,
+      setup: null,
     }
   }
 
@@ -1031,9 +1198,10 @@ export function buildOrderflowReading(candle, context) {
   const participation = summarizeParticipation(candle, readingContext.previousCandle, reliable)
   const liquidity = summarizeLiquidity(candle)
   const dataQuality = describeDataQuality(candle, reliable)
+  const market = readingContext.market || null
 
   if (!reliable) {
-    return buildHistoryReading(candle, participation, liquidity, dataQuality)
+    return buildHistoryReading(candle, participation, liquidity, dataQuality, market)
   }
 
   const setup = detectOrderflowSetup({
@@ -1044,6 +1212,7 @@ export function buildOrderflowReading(candle, context) {
     liquidity,
     imbalance,
     reliable,
+    market,
   })
 
   const rows = []
@@ -1217,6 +1386,15 @@ export function buildOrderflowReading(candle, context) {
   if (liquidity?.row) {
     rows.push({ label: "Liquidity", value: liquidity.row })
   }
+  if (market?.session?.quality?.row) {
+    rows.push({ label: "Session", value: market.session.quality.row })
+  }
+  if (market?.confluence?.row) {
+    rows.push({ label: "HTF", value: market.confluence.row })
+  }
+  if (market?.nearbyLevels?.length) {
+    rows.push({ label: "Levels", value: market.nearbyLevels.map((level) => level.text).join(" | ") })
+  }
   rows.push({ label: "Data", value: dataQuality })
 
   const score = bullScore - bearScore
@@ -1244,7 +1422,15 @@ export function buildOrderflowReading(candle, context) {
     headline,
     detail,
     chips: chips.slice(0, 7),
-    rows: rows.slice(0, 7),
+    rows: rows.slice(0, 9),
     score,
+    setup: setup ? {
+      direction: setup.direction,
+      gradeLabel: setup.gradeLabel,
+      qualityScore: setup.qualityScore,
+      setupLabel: setup.setupLabel,
+      headline: setup.headline,
+      price: setup.direction === "short" ? Number(candle?.high) || Number(candle?.close) || 0 : Number(candle?.low) || Number(candle?.close) || 0,
+    } : null,
   }
 }

@@ -8,9 +8,11 @@ import {
   drawDepthHistoryHeatmap,
   drawGrid,
   drawHoveredCandleHighlight,
+  drawSetupAnnotations,
   drawLiquidityHeatmap,
   drawProfileStudy,
   drawPriceAxis,
+  drawSessionLevels,
   selectProfileSource,
   drawTimeAxis,
   drawVWAP,
@@ -31,7 +33,16 @@ import {
   zoomPriceRange,
 } from "./chart/shared";
 
-export default function ChartCanvas({ candles, depthHistory = [], settings, activeFeatures, onCrosshairMove, viewCommand }) {
+export default function ChartCanvas({
+  candles,
+  depthHistory = [],
+  settings,
+  activeFeatures,
+  marketContext = null,
+  annotations = [],
+  onCrosshairMove,
+  viewCommand,
+}) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const goLiveBtnRef = useRef(null);
@@ -41,6 +52,8 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
   const depthHistoryRef = useRef(depthHistory);
   const settingsRef = useRef(settings);
   const featuresRef = useRef(activeFeatures);
+  const marketContextRef = useRef(marketContext);
+  const annotationsRef = useRef(annotations);
   const crosshairCbRef = useRef(onCrosshairMove);
 
   useEffect(() => {
@@ -48,8 +61,10 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
     depthHistoryRef.current = depthHistory;
     settingsRef.current = settings;
     featuresRef.current = activeFeatures;
+    marketContextRef.current = marketContext;
+    annotationsRef.current = annotations;
     crosshairCbRef.current = onCrosshairMove;
-  }, [candles, depthHistory, settings, activeFeatures, onCrosshairMove]);
+  }, [candles, depthHistory, settings, activeFeatures, marketContext, annotations, onCrosshairMove]);
 
   useEffect(() => {
     if (!viewCommand) return;
@@ -117,6 +132,8 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
         depthHistoryRef.current,
         settingsRef.current,
         featuresRef.current,
+        marketContextRef.current,
+        annotationsRef.current,
       );
       const button = goLiveBtnRef.current;
       if (button) button.style.display = stateRef.current.autoScroll ? "none" : "flex";
@@ -337,7 +354,7 @@ export default function ChartCanvas({ candles, depthHistory = [], settings, acti
   );
 }
 
-function drawFrame(canvas, container, state, candles, depthHistory, settings, activeFeatures) {
+function drawFrame(canvas, container, state, candles, depthHistory, settings, activeFeatures, marketContext, annotations) {
   if (!canvas || !container || !candles?.length) return;
 
   const dpr = window.devicePixelRatio || 1;
@@ -389,7 +406,7 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
     }
   }
 
-  applyVWAP(candles);
+  applyVWAP(candles, settings);
 
   const startIdx = Math.floor(state.offsetX / state.candleW);
   const endIdx = Math.ceil((state.offsetX + chartW) / state.candleW);
@@ -465,8 +482,21 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
   }
 
   if (modeFlags.showProfileStudy) {
-    const profileSource = selectProfileSource(candles, visible, modeFlags.profileStudy);
-    drawProfileStudy(ctx, profileSource, chartH, p2y, rowSize);
+    const profileSource = selectProfileSource(candles, visible, modeFlags.profileStudy, settings.sessionMode);
+    drawProfileStudy(
+      ctx,
+      profileSource,
+      chartH,
+      p2y,
+      rowSize,
+      settings?.vaPercent,
+      modeFlags.showPointOfControl,
+      modeFlags.showValueArea,
+    );
+  }
+
+  if (modeFlags.showSessionLevels && marketContext?.session) {
+    drawSessionLevels(ctx, marketContext, chartW, p2y, chartH, rowSize, settings);
   }
 
   for (let vi = 0; vi < visible.length; vi += 1) {
@@ -490,7 +520,11 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
     drawVWAP(ctx, visible, startIdx, p2y, i2x);
   }
 
-  drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, niceStep(priceRange), p2y, visible, modeFlags);
+  if (settings.showCallouts && annotations?.length) {
+    drawSetupAnnotations(ctx, annotations, visible, startIdx, i2x, p2y, chartW, chartH, rowSize);
+  }
+
+  drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, niceStep(priceRange), p2y, visible, modeFlags, settings.symbol);
 
   const lastVisible = visible.at(-1);
   if (modeFlags.showDOM && lastVisible?.bids?.length) {

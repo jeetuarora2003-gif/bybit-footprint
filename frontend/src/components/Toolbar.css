@@ -10,12 +10,28 @@
   gap: 2px;
   flex-shrink: 0;
   z-index: 100;
+  overflow: hidden;
 }
 
 .tb-left, .tb-center, .tb-right {
   display: flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+}
+
+.tb-left, .tb-center {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tb-left::-webkit-scrollbar,
+.tb-center::-webkit-scrollbar {
+  display: none;
+}
+
+.tb-right {
+  flex-shrink: 0;
 }
 
 .tb-sep {

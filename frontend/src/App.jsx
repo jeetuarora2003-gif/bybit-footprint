@@ -13,6 +13,8 @@ import {
   DEFAULT_CHART_SETTINGS,
   DEFAULT_FEATURES,
 } from "./components/chart/modeRules";
+import { buildOrderflowReading } from "./utils/orderflow";
+import { buildCandleContext, buildMarketContext } from "./utils/marketContext";
 import "./App.css";
 
 const REPLAY_SPEEDS = [1, 2, 4, 8];
@@ -34,9 +36,6 @@ export default function App() {
   });
 
   const activeFeatures = useMemo(() => new Set(activeFeatureArr), [activeFeatureArr]);
-  const resolvedSettings = useMemo(() => ({
-    ...settings,
-  }), [settings]);
 
   const updateSetting = (key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -53,13 +52,21 @@ export default function App() {
   };
 
   const applyClassicPreset = () => {
-    setSettings((prev) => ({ ...prev, ...CLASSIC_PRESET }));
+    setSettings((prev) => ({
+      ...prev,
+      ...CLASSIC_PRESET,
+    }));
     setActiveFeatureArr(CLASSIC_FEATURES);
     issueViewCommand("reset");
   };
 
   const resetWorkspace = () => {
-    setSettings(DEFAULT_CHART_SETTINGS);
+    setSettings((prev) => ({
+      ...DEFAULT_CHART_SETTINGS,
+      symbol: prev.symbol,
+      baseRowSize: prev.baseRowSize,
+      tickSize: prev.tickSize,
+    }));
     setActiveFeatureArr(DEFAULT_FEATURES);
     issueViewCommand("reset");
   };
@@ -73,43 +80,59 @@ export default function App() {
     startReplay: startReplayEngine,
     stopReplay: stopReplayEngine,
     stepReplay: stepReplayEngine,
-  } = useWebSocket(settings.timeframe, settings.tickSize);
+    instrument,
+    captureStats,
+  } = useWebSocket({
+    timeframe: settings.timeframe,
+    tickSize: settings.tickSize,
+    symbol: settings.symbol,
+  });
+
   const allCandles = useMemo(() => (liveCandle ? [...candles, liveCandle] : candles), [candles, liveCandle]);
+  const resolvedSettings = useMemo(() => ({
+    ...settings,
+    symbol: instrument?.symbol || settings.symbol,
+    baseRowSize: instrument?.tickSize || settings.baseRowSize,
+    tickSize: Array.isArray(instrument?.defaultTicks) && instrument.defaultTicks.length
+      ? String(instrument.defaultTicks.includes(Number(settings.tickSize)) ? Number(settings.tickSize) : instrument.defaultTicks[0])
+      : settings.tickSize,
+  }), [instrument, settings]);
   const replay = {
     ...replayState,
     playing: replayState.enabled && replayUi.playing && replayState.cursor < replayState.totalEvents,
     speed: replayUi.speed,
   };
   const infoCandle = crosshairData ?? liveCandle;
-  const readingContext = useMemo(() => {
-    if (!infoCandle?.candle_open_time || allCandles.length === 0) {
-      return {
-        previousCandle: null,
-        nextCandle: null,
-        recentCandles: [],
-        futureCandles: [],
-      };
+  const readingContext = useMemo(
+    () => buildMarketContext(allCandles, infoCandle, resolvedSettings),
+    [allCandles, infoCandle, resolvedSettings],
+  );
+  const latestContext = useMemo(
+    () => buildMarketContext(allCandles, liveCandle || allCandles.at(-1), resolvedSettings),
+    [allCandles, liveCandle, resolvedSettings],
+  );
+  const chartAnnotations = useMemo(() => {
+    if (!allCandles.length) return [];
+    const start = Math.max(0, allCandles.length - 240);
+    const annotations = [];
+    for (let index = start; index < allCandles.length; index += 1) {
+      const candle = allCandles[index];
+      const context = buildCandleContext(allCandles, index, resolvedSettings);
+      const reading = buildOrderflowReading(candle, context);
+      if (!reading?.setup) continue;
+      const minimumScore = context.market?.scoreConfig?.calloutMinimumScore ?? 7;
+      if (reading.setup.qualityScore < minimumScore) continue;
+      annotations.push({
+        candle_open_time: candle.candle_open_time,
+        price: reading.setup.price,
+        direction: reading.setup.direction,
+        label: reading.setup.setupLabel,
+        gradeLabel: reading.setup.gradeLabel,
+        qualityScore: reading.setup.qualityScore,
+      });
     }
-
-    let index = -1;
-    for (let cursor = allCandles.length - 1; cursor >= 0; cursor -= 1) {
-      if (allCandles[cursor]?.candle_open_time === infoCandle.candle_open_time) {
-        index = cursor;
-        break;
-      }
-    }
-
-    if (index < 0) {
-      index = allCandles.length - 1;
-    }
-
-    return {
-      previousCandle: index > 0 ? allCandles[index - 1] : null,
-      nextCandle: index + 1 < allCandles.length ? allCandles[index + 1] : null,
-      recentCandles: allCandles.slice(Math.max(0, index - 8), index),
-      futureCandles: allCandles.slice(index + 1, index + 3),
-    };
-  }, [allCandles, infoCandle]);
+    return annotations.slice(-48);
+  }, [allCandles, resolvedSettings]);
 
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
@@ -168,6 +191,8 @@ export default function App() {
         settings={resolvedSettings}
         updateSetting={updateSetting}
         status={status}
+        instrument={instrument}
+        captureStats={captureStats}
         activeFeatureArr={activeFeatureArr}
         toggleFeature={toggleFeature}
         onApplyPreset={applyClassicPreset}
@@ -179,7 +204,7 @@ export default function App() {
         onStepReplay={stepReplay}
         onCycleReplaySpeed={cycleReplaySpeed}
       />
-      <InfoBar candle={infoCandle} settings={resolvedSettings} />
+      <InfoBar candle={infoCandle} settings={resolvedSettings} instrument={instrument} marketContext={readingContext.market} />
       <OrderflowReading candle={infoCandle} context={readingContext} />
       <div className="app-body">
         <Sidebar
@@ -195,6 +220,8 @@ export default function App() {
               depthHistory={depthHistory}
               settings={resolvedSettings}
               activeFeatures={activeFeatures}
+              marketContext={latestContext.market}
+              annotations={chartAnnotations}
               onCrosshairMove={setCrosshairData}
               viewCommand={viewCommand}
             />
@@ -209,6 +236,8 @@ export default function App() {
         onResetView={() => issueViewCommand("reset")}
         onAutoFitView={() => issueViewCommand("fit")}
         settings={resolvedSettings}
+        instrument={instrument}
+        marketContext={latestContext.market}
         replay={replay}
         onStartReplay={startReplay}
         onStopReplay={stopReplay}

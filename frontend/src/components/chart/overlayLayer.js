@@ -1,4 +1,5 @@
 import { formatCompactValue, formatPrice as formatChartPrice } from "../../utils/exoFormat";
+import { buildProfileLevels } from "../../utils/marketContext";
 import {
   BG,
   BUY,
@@ -22,17 +23,17 @@ import {
   frameOpenTimeForTimeframe,
 } from "./shared";
 
-export function applyVWAP(candles) {
+export function applyVWAP(candles, settings = {}) {
   let cumPV = 0;
   let cumVol = 0;
-  let lastVwapDay = -1;
+  let lastKey = "";
 
   for (const candle of candles) {
-    const day = new Date(candle.candle_open_time).getUTCDate();
-    if (day !== lastVwapDay) {
+    const key = resolveVWAPKey(candle.candle_open_time, settings.vwapMode, settings.sessionMode);
+    if (key !== lastKey) {
       cumPV = 0;
       cumVol = 0;
-      lastVwapDay = day;
+      lastKey = key;
     }
     const typicalPrice = (candle.high + candle.low + candle.close) / 3;
     const volume = candle.total_volume || 0;
@@ -40,6 +41,18 @@ export function applyVWAP(candles) {
     cumVol += volume;
     candle.vwap = cumVol > 0 ? cumPV / cumVol : null;
   }
+}
+
+function resolveVWAPKey(timestamp, vwapMode, sessionMode) {
+  const date = new Date(timestamp);
+  if (vwapMode === "composite") return "composite";
+  if (vwapMode === "daily") {
+    return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
+  }
+  if (sessionMode === "asia") return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}-asia`;
+  if (sessionMode === "london") return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}-london`;
+  if (sessionMode === "newyork") return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}-newyork`;
+  return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
 }
 
 export function drawGrid(ctx, chartW, pMin, pMax, pStep, p2y) {
@@ -54,7 +67,7 @@ export function drawGrid(ctx, chartW, pMin, pMax, pStep, p2y) {
   }
 }
 
-export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible, modeFlags) {
+export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible, modeFlags, symbol = "BTCUSDT") {
   ctx.fillStyle = "#0c0f15";
   ctx.fillRect(chartW, 0, axisW, chartH);
   ctx.strokeStyle = "rgba(255,255,255,0.06)";
@@ -94,7 +107,8 @@ export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y
   ctx.lineTo(chartW, y);
   ctx.stroke();
   if ((modeFlags?.currentPriceLabel ?? "split") === "split") {
-    const symbolW = 46;
+    ctx.font = "bold 11px 'JetBrains Mono', monospace";
+    const symbolW = Math.max(46, Math.min(axisW - 22, ctx.measureText(symbol).width + 14));
     ctx.fillStyle = "rgba(10,14,20,0.96)";
     ctx.fillRect(chartW, y - 10, symbolW, 20);
     ctx.fillStyle = color;
@@ -102,7 +116,7 @@ export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y
     ctx.fillStyle = color;
     ctx.font = "bold 11px 'JetBrains Mono', monospace";
     ctx.textAlign = "center";
-    ctx.fillText("BTCUSDT", chartW + symbolW / 2, y);
+    ctx.fillText(symbol, chartW + symbolW / 2, y);
     ctx.fillStyle = "#0b0e14";
     ctx.fillText(formatChartPrice(last.close), chartW + symbolW + (axisW - symbolW) / 2, y);
   } else {
@@ -170,7 +184,7 @@ export function drawCrosshair(ctx, state, chartW, chartH, pMin, priceRange, axis
   ctx.fillText(formatChartPrice(hoveredPrice), chartW + axisW / 2, mouse.y);
 }
 
-export function drawProfileStudy(ctx, sourceCandles, chartH, p2y, rowSize) {
+export function drawProfileStudy(ctx, sourceCandles, chartH, p2y, rowSize, valueAreaPercent = 70, showPOC = true, showVA = true) {
   const profile = new Map();
   for (const candle of sourceCandles) {
     const clusters = candle.clusters || [];
@@ -207,21 +221,50 @@ export function drawProfileStudy(ctx, sourceCandles, chartH, p2y, rowSize) {
     ctx.fillStyle = price === pocPrice ? PROFILE_POC : PROFILE_COLOR;
     ctx.fillRect(0, rowTop, width, Math.max(1, rowH - 0.5));
   }
+
+  const stats = buildProfileLevels(sourceCandles, rowSize, valueAreaPercent);
+  if (!stats) return;
+
+  if (showVA) {
+    drawHorizontalLevel(ctx, stats.vah, p2y, chartH, "rgba(38,166,154,0.55)");
+    drawHorizontalLevel(ctx, stats.val, p2y, chartH, "rgba(38,166,154,0.55)");
+  }
+  if (showPOC) {
+    drawHorizontalLevel(ctx, stats.poc, p2y, chartH, "rgba(239,83,80,0.75)");
+  }
 }
 
-export function selectProfileSource(allCandles, visible, profileStudy) {
+function resolveSessionRange(timestamp, sessionMode) {
+  const date = new Date(timestamp);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  if (sessionMode === "asia") {
+    const start = Date.UTC(year, month, day, 0, 0, 0, 0);
+    return { start, end: start + 8 * 60 * 60_000 };
+  }
+  if (sessionMode === "london") {
+    const start = Date.UTC(year, month, day, 7, 0, 0, 0);
+    return { start, end: start + 8 * 60 * 60_000 };
+  }
+  if (sessionMode === "newyork") {
+    const start = Date.UTC(year, month, day, 13, 0, 0, 0);
+    return { start, end: start + 8 * 60 * 60_000 };
+  }
+  const start = Date.UTC(year, month, day, 0, 0, 0, 0);
+  return { start, end: start + 24 * 60 * 60_000 };
+}
+
+export function selectProfileSource(allCandles, visible, profileStudy, sessionMode = "utcDay") {
   if (!visible?.length) return [];
   if (profileStudy === "composite") {
     return allCandles;
   }
   if (profileStudy === "session") {
     const lastVisible = visible.at(-1);
-    const lastDate = new Date(lastVisible.candle_open_time);
+    const range = resolveSessionRange(lastVisible.candle_open_time, sessionMode);
     return allCandles.filter((candle) => {
-      const date = new Date(candle.candle_open_time);
-      return date.getUTCFullYear() === lastDate.getUTCFullYear()
-        && date.getUTCMonth() === lastDate.getUTCMonth()
-        && date.getUTCDate() === lastDate.getUTCDate();
+      return candle.candle_open_time >= range.start && candle.candle_open_time < range.end;
     });
   }
   return visible;
@@ -420,6 +463,84 @@ export function drawVWAP(ctx, visible, startIdx, p2y, i2x) {
     }
   }
   if (started) ctx.stroke();
+}
+
+function drawHorizontalLevel(ctx, price, p2y, chartH, color) {
+  const y = p2y(price);
+  if (y < 0 || y > chartH) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(ctx.canvas.clientWidth || ctx.canvas.width, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+export function drawSessionLevels(ctx, marketContext, chartW, p2y, chartH, rowSize, settings) {
+  const session = marketContext?.session;
+  const selectedProfile = marketContext?.profile?.selected;
+  if (!session) return;
+
+  const levels = [
+    { price: session.sessionHigh, color: "rgba(66,165,245,0.55)" },
+    { price: session.sessionLow, color: "rgba(66,165,245,0.55)" },
+    { price: session.priorHigh, color: "rgba(250,204,21,0.5)" },
+    { price: session.priorLow, color: "rgba(250,204,21,0.5)" },
+    { price: session.openingRangeHigh, color: "rgba(148,163,184,0.42)" },
+    { price: session.openingRangeLow, color: "rgba(148,163,184,0.42)" },
+  ];
+
+  if (settings?.showPOC && selectedProfile?.poc) {
+    levels.push({ price: selectedProfile.poc, color: "rgba(239,83,80,0.6)" });
+  }
+  if (settings?.showVA && selectedProfile?.vah && selectedProfile?.val) {
+    levels.push({ price: selectedProfile.vah, color: "rgba(38,166,154,0.45)" });
+    levels.push({ price: selectedProfile.val, color: "rgba(38,166,154,0.45)" });
+  }
+
+  for (const level of levels) {
+    const y = p2y(level.price);
+    if (y < 0 || y > chartH) continue;
+    ctx.strokeStyle = level.color;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(chartW, y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+export function drawSetupAnnotations(ctx, annotations, visible, startIdx, i2x, p2y, chartW, chartH, rowSize) {
+  if (!annotations?.length || !visible?.length) return;
+  const indexByOpenTime = new Map();
+  visible.forEach((candle, index) => {
+    indexByOpenTime.set(Number(candle?.candle_open_time), startIdx + index);
+  });
+
+  for (const annotation of annotations) {
+    const candleIndex = indexByOpenTime.get(Number(annotation?.candle_open_time));
+    if (candleIndex == null) continue;
+
+    const x = i2x(candleIndex);
+    if (x < 0 || x > chartW) continue;
+    const basePrice = Number(annotation?.price) || 0;
+    const y = p2y(basePrice + (annotation.direction === "short" ? rowSize * 2 : -rowSize * 2));
+    const boxY = annotation.direction === "short" ? Math.max(4, y - 20) : Math.min(chartH - 20, y + 6);
+    const label = `${annotation.gradeLabel.split(" ")[0]} ${annotation.label}`;
+    ctx.font = "bold 10px 'JetBrains Mono', monospace";
+    const textWidth = Math.min(190, ctx.measureText(label).width + 12);
+    const boxX = clamp(x - textWidth / 2, 4, chartW - textWidth - 4);
+    ctx.fillStyle = annotation.direction === "short" ? "rgba(239,83,80,0.88)" : "rgba(66,165,245,0.86)";
+    ctx.fillRect(boxX, boxY, textWidth, 16);
+    ctx.fillStyle = "#f8fafc";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, boxX + textWidth / 2, boxY + 8);
+  }
 }
 
 export function drawHoveredCandleHighlight(ctx, hoveredIndex, startIdx, chartW, chartH, candleW, i2x) {

@@ -73,6 +73,32 @@ const PROFILE_STUDIES = [
   { value: "composite", label: "Composite Profile" },
 ];
 
+const SESSION_MODES = [
+  { value: "utcDay", label: "UTC Day" },
+  { value: "asia", label: "Asia" },
+  { value: "london", label: "London" },
+  { value: "newyork", label: "New York" },
+];
+
+const SCORING_PRESETS = [
+  { value: "aggressive", label: "Aggressive" },
+  { value: "balanced", label: "Balanced" },
+  { value: "strict", label: "Strict" },
+];
+
+const SESSION_FILTERS = [
+  { value: "off", label: "Off" },
+  { value: "balanced", label: "Balanced" },
+  { value: "strict", label: "Strict" },
+];
+
+const CALLOUT_GRADES = [
+  { value: "A", label: "A only" },
+  { value: "B", label: "B+" },
+  { value: "C", label: "C+" },
+  { value: "D", label: "All" },
+];
+
 const FEATURE_TABS = [
   { key: "vol", label: "Vol", supported: true },
   { key: "tcount", label: "TCount", supported: true },
@@ -132,6 +158,8 @@ export default function Toolbar({
   settings,
   updateSetting,
   status,
+  instrument,
+  captureStats,
   activeFeatureArr,
   toggleFeature,
   onApplyPreset,
@@ -143,6 +171,11 @@ export default function Toolbar({
   onStepReplay,
   onCycleReplaySpeed,
 }) {
+  const tickOptions = (instrument?.defaultTicks || [1, 5, 10, 25, 50, 100]).map((value) => ({
+    value: String(value),
+    label: `Tick x ${value}`,
+  }));
+
   const applyClusterMode = (value) => {
     updateSetting("clusterMode", value);
     const preset = MODE_PRESETS[value];
@@ -153,6 +186,12 @@ export default function Toolbar({
     }
   };
 
+  const editSymbol = () => {
+    const nextSymbol = window.prompt("Enter a Bybit linear symbol", settings.symbol || instrument?.symbol || "BTCUSDT");
+    if (!nextSymbol) return;
+    updateSetting("symbol", nextSymbol.trim().toUpperCase());
+  };
+
   return (
     <div className="toolbar">
       <div className="tb-left">
@@ -160,8 +199,8 @@ export default function Toolbar({
         <button className="tb-btn" onClick={onResetWorkspace}>Reset</button>
         <div className="tb-sep" />
 
-        <button className="tb-btn">
-          <span className="tb-exchange">Bybit:</span> BTCUSDT
+        <button className="tb-btn" onClick={editSymbol} title="Change symbol">
+          <span className="tb-exchange">Bybit:</span> {settings.symbol || instrument?.symbol || "BTCUSDT"}
         </button>
         <div className="tb-sep" />
 
@@ -174,7 +213,7 @@ export default function Toolbar({
 
         <Dropdown
           value={settings.tickSize || "1"}
-          options={TICK_SIZES}
+          options={tickOptions.length ? tickOptions : TICK_SIZES}
           onChange={(value) => updateSetting("tickSize", value)}
         />
         <div className="tb-sep" />
@@ -209,6 +248,30 @@ export default function Toolbar({
           options={PROFILE_STUDIES}
           onChange={(value) => updateSetting("profileStudy", value)}
           wide
+        />
+        <Dropdown
+          label="Session"
+          value={settings.sessionMode || "utcDay"}
+          options={SESSION_MODES}
+          onChange={(value) => updateSetting("sessionMode", value)}
+        />
+        <Dropdown
+          label="Score"
+          value={settings.scoringPreset || "balanced"}
+          options={SCORING_PRESETS}
+          onChange={(value) => updateSetting("scoringPreset", value)}
+        />
+        <Dropdown
+          label="Filter"
+          value={settings.sessionFilter || "balanced"}
+          options={SESSION_FILTERS}
+          onChange={(value) => updateSetting("sessionFilter", value)}
+        />
+        <Dropdown
+          label="Callouts"
+          value={settings.calloutGrade || "B"}
+          options={CALLOUT_GRADES}
+          onChange={(value) => updateSetting("calloutGrade", value)}
         />
       </div>
 
@@ -248,6 +311,18 @@ export default function Toolbar({
         >
           Short#
         </button>
+        <button
+          className={`tb-tab${settings.showCallouts ? " tb-tab--active" : ""}`}
+          onClick={() => updateSetting("showCallouts", !settings.showCallouts)}
+        >
+          Notes
+        </button>
+        <button
+          className={`tb-tab${settings.showSessionLevels ? " tb-tab--active" : ""}`}
+          onClick={() => updateSetting("showSessionLevels", !settings.showSessionLevels)}
+        >
+          Levels
+        </button>
       </div>
 
       <div className="tb-right">
@@ -275,6 +350,12 @@ export default function Toolbar({
             <div className="tb-sep" />
           </>
         )}
+        <span
+          className="tb-btn tb-btn--static mono"
+          title={`Tick ${instrument?.tickSize || settings.baseRowSize} | trades ${captureStats?.tradeEvents || 0} | depth events ${captureStats?.depthEvents || 0}`}
+        >
+          {instrument?.tickSize ? `tick ${instrument.tickSize}` : "tick ?"}
+        </span>
         <span className="tb-btn tb-btn--static mono">
           {settings.clusterMode}
         </span>

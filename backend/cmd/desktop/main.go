@@ -122,6 +122,40 @@ type bybitOIResult struct {
 	NextPageCursor string `json:"nextPageCursor"`
 }
 
+type bybitInstrumentResult struct {
+	List []struct {
+		Symbol         string `json:"symbol"`
+		BaseCoin       string `json:"baseCoin"`
+		QuoteCoin      string `json:"quoteCoin"`
+		PriceScale     string `json:"priceScale"`
+		PriceFilter    struct {
+			TickSize string `json:"tickSize"`
+			MinPrice string `json:"minPrice"`
+			MaxPrice string `json:"maxPrice"`
+		} `json:"priceFilter"`
+		LotSizeFilter struct {
+			QtyStep      string `json:"qtyStep"`
+			MinOrderQty  string `json:"minOrderQty"`
+			MaxOrderQty  string `json:"maxOrderQty"`
+			MinNotional  string `json:"minNotionalValue"`
+			MaxMarketQty string `json:"maxMktOrderQty"`
+		} `json:"lotSizeFilter"`
+	} `json:"list"`
+}
+
+type instrumentInfo struct {
+	Symbol       string  `json:"symbol"`
+	BaseCoin     string  `json:"baseCoin"`
+	QuoteCoin    string  `json:"quoteCoin"`
+	TickSize     float64 `json:"tickSize"`
+	QtyStep      float64 `json:"qtyStep"`
+	MinOrderQty  float64 `json:"minOrderQty"`
+	MaxOrderQty  float64 `json:"maxOrderQty"`
+	MinNotional  float64 `json:"minNotionalValue"`
+	PriceScale   int     `json:"priceScale"`
+	DefaultTicks []int   `json:"defaultTicks"`
+}
+
 func main() {
 	port := flag.Int("port", 0, "local port to use; 0 picks a free port")
 	noOpen := flag.Bool("no-open", false, "disable automatically opening the app in a browser")
@@ -135,6 +169,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/history", handleHistory)
+	mux.HandleFunc("/api/instrument", handleInstrument)
 	mux.Handle("/", makeStaticHandler(static, indexHTML))
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
@@ -214,8 +249,12 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 
 	limit := clampInt(r.URL.Query().Get("limit"), 1, maxLimit, maxLimit)
 	client := &http.Client{Timeout: 20 * time.Second}
+	rowSize := defaultRowSize
+	if instrument, err := fetchInstrumentInfo(r.Context(), client, symbol); err == nil && instrument.TickSize > 0 {
+		rowSize = instrument.TickSize
+	}
 
-	bars, err := fetchRecentKlines(r.Context(), client, symbol, limit)
+	bars, err := fetchRecentKlines(r.Context(), client, symbol, limit, rowSize)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error":  "history_fetch_failed",
@@ -245,7 +284,26 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bars)
 }
 
-func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, limit int) ([]historyBar, error) {
+func handleInstrument(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
+	if symbol == "" {
+		symbol = defaultSymbol
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	instrument, err := fetchInstrumentInfo(r.Context(), client, symbol)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":  "instrument_fetch_failed",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, instrument)
+}
+
+func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, limit int, rowSize float64) ([]historyBar, error) {
 	pageLimit := minInt(1000, limit)
 	barsByOpenTime := make(map[int64]historyBar, limit)
 	nextEnd := time.Now().UnixMilli()
@@ -292,7 +350,7 @@ func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, 
 				High:              round6(high),
 				Low:               round6(low),
 				Close:             round6(closeValue),
-				RowSize:           defaultRowSize,
+				RowSize:           rowSize,
 				Clusters:          []historyCluster{},
 				CandleDelta:       0,
 				CVD:               0,
@@ -408,6 +466,37 @@ func fetchOpenInterestHistory(
 	return snapshots, nil
 }
 
+func fetchInstrumentInfo(ctx context.Context, client *http.Client, symbol string) (instrumentInfo, error) {
+	var result bybitInstrumentResult
+	if err := fetchBybitResult(ctx, client, "/v5/market/instruments-info", map[string]string{
+		"category": "linear",
+		"symbol":   symbol,
+	}, &result); err != nil {
+		return instrumentInfo{}, err
+	}
+
+	if len(result.List) == 0 {
+		return instrumentInfo{}, fmt.Errorf("instrument %s not found", symbol)
+	}
+
+	item := result.List[0]
+	tickSize := parseFloatOrDefault(item.PriceFilter.TickSize, defaultRowSize)
+	priceScale := int(parseFloatOrDefault(item.PriceScale, 1))
+
+	return instrumentInfo{
+		Symbol:       strings.ToUpper(strings.TrimSpace(item.Symbol)),
+		BaseCoin:     strings.ToUpper(strings.TrimSpace(item.BaseCoin)),
+		QuoteCoin:    strings.ToUpper(strings.TrimSpace(item.QuoteCoin)),
+		TickSize:     tickSize,
+		QtyStep:      parseFloatOrDefault(item.LotSizeFilter.QtyStep, 0),
+		MinOrderQty:  parseFloatOrDefault(item.LotSizeFilter.MinOrderQty, 0),
+		MaxOrderQty:  parseFloatOrDefault(item.LotSizeFilter.MaxOrderQty, 0),
+		MinNotional:  parseFloatOrDefault(item.LotSizeFilter.MinNotional, 0),
+		PriceScale:   priceScale,
+		DefaultTicks: defaultTickMultipliers(tickSize),
+	}, nil
+}
+
 func fetchBybitResult(
 	ctx context.Context,
 	client *http.Client,
@@ -503,6 +592,29 @@ func clampInt(value string, minValue int, maxValue int, fallback int) int {
 
 func round6(value float64) float64 {
 	return math.Round(value*1e6) / 1e6
+}
+
+func parseFloatOrDefault(value string, fallback float64) float64 {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return round6(parsed)
+}
+
+func defaultTickMultipliers(tickSize float64) []int {
+	switch {
+	case tickSize >= 100:
+		return []int{1, 2, 5, 10}
+	case tickSize >= 10:
+		return []int{1, 2, 5, 10, 25}
+	case tickSize >= 1:
+		return []int{1, 2, 5, 10, 25, 50}
+	case tickSize >= 0.1:
+		return []int{1, 2, 5, 10, 25, 50, 100}
+	default:
+		return []int{1, 5, 10, 25, 50, 100, 250}
+	}
 }
 
 func minInt(a int, b int) int {

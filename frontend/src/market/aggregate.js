@@ -21,8 +21,8 @@ export function parseTickMultiplier(value) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 1;
 }
 
-export function aggregatedRowSize(tickMultiplier) {
-  return round6(BASE_ROW_SIZE * parseTickMultiplier(tickMultiplier));
+export function aggregatedRowSize(tickMultiplier, baseRowSize = BASE_ROW_SIZE) {
+  return round6((Number(baseRowSize) || BASE_ROW_SIZE) * parseTickMultiplier(tickMultiplier));
 }
 
 export function timeframeDurationMs(timeframe, referenceTs) {
@@ -493,8 +493,11 @@ function mergeDataSource(current, next) {
 
 export function aggregateBars(source, timeframe = "1m", tickMultiplier = 1, studyConfig = DEFAULT_STUDY_CONFIG) {
   const normalizedTimeframe = normalizeTimeframe(timeframe);
-  const targetRowSize = aggregatedRowSize(tickMultiplier);
   if (!source?.length) return [];
+
+  const firstBarWithRowSize = source.find((bar) => (Number(bar?.row_size) || 0) > 0);
+  const sourceRowSize = Number(firstBarWithRowSize?.row_size) || BASE_ROW_SIZE;
+  const targetRowSize = round6(sourceRowSize * parseTickMultiplier(tickMultiplier));
 
   const frames = [];
   const frameCounts = [];
