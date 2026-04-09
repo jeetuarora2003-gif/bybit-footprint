@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "./Toolbar.css";
 import { MODE_PRESETS } from "./chart/modeRules";
 
@@ -74,7 +75,9 @@ const FEATURE_TABS = [
 
 function Dropdown({ label, value, options, onChange, wide }) {
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState(null);
   const ref = useRef(null);
+  const buttonRef = useRef(null);
 
   useEffect(() => {
     const handler = (event) => {
@@ -84,20 +87,64 @@ function Dropdown({ label, value, options, onChange, wide }) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const updatePosition = () => {
+      const button = buttonRef.current;
+      if (!button) return;
+
+      const rect = button.getBoundingClientRect();
+      const minWidth = wide ? 200 : 160;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const left = Math.max(8, Math.min(rect.left, viewportWidth - minWidth - 8));
+      const top = rect.bottom + 2;
+      const maxHeight = Math.max(180, viewportHeight - top - 12);
+
+      setMenuStyle({
+        position: "fixed",
+        left,
+        top,
+        minWidth,
+        maxHeight,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, wide]);
+
   const current = options.find((option) => option.value === value);
 
   return (
     <div className="tb-dropdown" ref={ref}>
-      <button className="tb-dropdown-btn" onClick={() => setOpen((prev) => !prev)}>
+      <button
+        type="button"
+        ref={buttonRef}
+        className="tb-dropdown-btn"
+        onClick={() => setOpen((prev) => !prev)}
+      >
         {label && <span className="tb-dropdown-label">{label}</span>}
         <span className="tb-dropdown-value">{current?.label ?? value}</span>
         <span className="tb-dropdown-arrow">v</span>
       </button>
-      {open && (
-        <div className={`tb-dropdown-menu${wide ? " tb-dropdown-menu--wide" : ""}`}>
+      {open && menuStyle && createPortal(
+        <div
+          className={`tb-dropdown-menu${wide ? " tb-dropdown-menu--wide" : ""}`}
+          style={menuStyle}
+        >
           {options.map((option) => (
             <button
               key={option.value}
+              type="button"
               className={`tb-dropdown-item${option.value === value ? " active" : ""}`}
               onClick={() => {
                 onChange(option.value);
@@ -107,7 +154,8 @@ function Dropdown({ label, value, options, onChange, wide }) {
               {option.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -154,11 +202,11 @@ export default function Toolbar({
   return (
     <div className="toolbar">
       <div className="tb-left">
-        <button className="tb-btn tb-btn--accent" onClick={onApplyPreset}>Classic</button>
-        <button className="tb-btn" onClick={onResetWorkspace}>Reset</button>
+        <button type="button" className="tb-btn tb-btn--accent" onClick={onApplyPreset}>Classic</button>
+        <button type="button" className="tb-btn" onClick={onResetWorkspace}>Reset</button>
         <div className="tb-sep" />
 
-        <button className="tb-btn" onClick={editSymbol} title="Change symbol">
+        <button type="button" className="tb-btn" onClick={editSymbol} title="Change symbol">
           <span className="tb-exchange">Bybit:</span> {settings.symbol || instrument?.symbol || "BTCUSDT"}
         </button>
         <div className="tb-sep" />
@@ -207,6 +255,7 @@ export default function Toolbar({
         {FEATURE_TABS.map((tab) => (
           <button
             key={tab.key}
+            type="button"
             className={[
               "tb-tab",
               activeFeatureArr.includes(tab.key) ? "tb-tab--active" : "",
@@ -221,18 +270,21 @@ export default function Toolbar({
         ))}
         <div className="tb-sep" style={{ margin: "0 4px" }} />
         <button
+          type="button"
           className={`tb-tab${settings.showDOM ? " tb-tab--active" : ""}`}
           onClick={() => updateSetting("showDOM", !settings.showDOM)}
         >
           DOM
         </button>
         <button
+          type="button"
           className={`tb-tab${settings.showHeatmap ? " tb-tab--active" : ""}`}
           onClick={() => updateSetting("showHeatmap", !settings.showHeatmap)}
         >
           Heat
         </button>
         <button
+          type="button"
           className={`tb-tab${settings.shortNumbers ? " tb-tab--active" : ""}`}
           onClick={() => updateSetting("shortNumbers", !settings.shortNumbers)}
           title="Short numbers for footprint text"
@@ -240,6 +292,7 @@ export default function Toolbar({
           Short#
         </button>
         <button
+          type="button"
           className={`tb-tab${settings.showCallouts ? " tb-tab--active" : ""}`}
           onClick={() => updateSetting("showCallouts", !settings.showCallouts)}
         >
@@ -250,18 +303,19 @@ export default function Toolbar({
       <div className="tb-right">
         {replay?.enabled ? (
           <>
-            <button className="tb-btn tb-btn--accent" onClick={onStopReplay}>Exit Replay</button>
-            <button className="tb-btn tb-btn--icon" onClick={() => onStepReplay(-1)}>{"<"}</button>
-            <button className="tb-btn tb-btn--icon" onClick={onToggleReplayPlayback}>
+            <button type="button" className="tb-btn tb-btn--accent" onClick={onStopReplay}>Exit Replay</button>
+            <button type="button" className="tb-btn tb-btn--icon" onClick={() => onStepReplay(-1)}>{"<"}</button>
+            <button type="button" className="tb-btn tb-btn--icon" onClick={onToggleReplayPlayback}>
               {replay.playing ? "Pause" : "Play"}
             </button>
-            <button className="tb-btn tb-btn--icon" onClick={() => onStepReplay(1)}>{">"}</button>
-            <button className="tb-btn" onClick={onCycleReplaySpeed}>{replay.speed}x</button>
+            <button type="button" className="tb-btn tb-btn--icon" onClick={() => onStepReplay(1)}>{">"}</button>
+            <button type="button" className="tb-btn" onClick={onCycleReplaySpeed}>{replay.speed}x</button>
             <div className="tb-sep" />
           </>
         ) : (
           <>
             <button
+              type="button"
               className="tb-btn"
               onClick={onStartReplay}
               disabled={!replay?.available}
