@@ -220,6 +220,14 @@ export default function Toolbar({
         >
           Short#
         </button>
+        <button
+          type="button"
+          className={`tb-tab${settings.decisionLens ? " tb-tab--active" : ""}`}
+          onClick={() => updateSetting("decisionLens", !settings.decisionLens)}
+          title="Strict trap-only decision filter"
+        >
+          Lens
+        </button>
       </div>
 
       <div className="tb-right">

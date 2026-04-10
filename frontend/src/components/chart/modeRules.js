@@ -15,6 +15,7 @@ export const DEFAULT_CHART_SETTINGS = {
   showDOM: false,
   showHeatmap: false,
   showCallouts: false,
+  decisionLens: false,
   vaPercent: 70,
   shadingMode: "adaptive",
   shortNumbers: true,

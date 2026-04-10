@@ -4,6 +4,7 @@ import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
 import InfoBar from "./components/InfoBar";
 import CaptureHealth from "./components/CaptureHealth";
+import DecisionLens from "./components/DecisionLens";
 import OrderflowReading from "./components/OrderflowReading";
 import ChartCanvas from "./components/ChartCanvas";
 import SubPanels from "./components/SubPanels";
@@ -130,6 +131,10 @@ export default function App() {
     () => buildSimpleReadingContext(allCandles, infoCandle, resolvedSettings.timeframe),
     [allCandles, infoCandle, resolvedSettings.timeframe],
   );
+  const decisionContext = useMemo(
+    () => buildDecisionContext(allCandles, infoCandle),
+    [allCandles, infoCandle],
+  );
 
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
@@ -207,6 +212,13 @@ export default function App() {
         captureStats={captureStats}
         liveCandle={liveCandle}
       />
+      <DecisionLens
+        enabled={Boolean(resolvedSettings.decisionLens)}
+        candle={infoCandle}
+        context={decisionContext}
+        captureStats={captureStats}
+        status={status}
+      />
       <OrderflowReading candle={infoCandle} context={readingContext} />
       <div className="app-body">
         <Sidebar
@@ -277,6 +289,35 @@ function buildSimpleReadingContext(allCandles, activeCandle, timeframe = "1m") {
     nextCandle: index + 1 < allCandles.length ? allCandles[index + 1] : null,
     recentCandles: allCandles.slice(Math.max(0, index - recentCount), index),
     futureCandles: allCandles.slice(index + 1, index + 1 + futureCount),
+  };
+}
+
+function buildDecisionContext(allCandles, activeCandle) {
+  if (!activeCandle?.candle_open_time || allCandles.length === 0) {
+    return {
+      previousCandle: null,
+      nextCandle: null,
+      history: [],
+    };
+  }
+
+  let index = -1;
+  for (let cursor = allCandles.length - 1; cursor >= 0; cursor -= 1) {
+    if (allCandles[cursor]?.candle_open_time === activeCandle.candle_open_time) {
+      index = cursor;
+      break;
+    }
+  }
+
+  if (index < 0) {
+    index = allCandles.length - 1;
+  }
+
+  const historyStart = Math.max(0, index - 60);
+  return {
+    previousCandle: index > 0 ? allCandles[index - 1] : null,
+    nextCandle: index + 1 < allCandles.length ? allCandles[index + 1] : null,
+    history: allCandles.slice(historyStart, index + 1),
   };
 }
 
