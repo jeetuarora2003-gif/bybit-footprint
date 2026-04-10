@@ -14,7 +14,6 @@ import {
   DEFAULT_FEATURES,
 } from "./components/chart/modeRules";
 import { normalizeTimeframe } from "./market/aggregate";
-import { buildOrderflowReading } from "./utils/orderflow";
 import "./App.css";
 
 const REPLAY_SPEEDS = [1, 2, 4, 8];
@@ -130,29 +129,6 @@ export default function App() {
     () => buildSimpleReadingContext(allCandles, infoCandle, resolvedSettings.timeframe),
     [allCandles, infoCandle, resolvedSettings.timeframe],
   );
-  const chartAnnotations = useMemo(() => {
-    if (!allCandles.length) return [];
-    const start = Math.max(0, allCandles.length - 96);
-    const annotations = [];
-    for (let index = start; index < allCandles.length; index += 1) {
-      const candle = allCandles[index];
-      const context = buildSimpleReadingContext(allCandles, candle, resolvedSettings.timeframe);
-      const reading = buildOrderflowReading(candle, context);
-      if (!reading?.setup) continue;
-      const minimumScore = 7;
-      if (reading.setup.qualityScore < minimumScore) continue;
-      if (reading.setup.confirmationState !== "confirmed") continue;
-      annotations.push({
-        candle_open_time: candle.candle_open_time,
-        price: reading.setup.price,
-        direction: reading.setup.direction,
-        label: reading.setup.setupLabel,
-        gradeLabel: reading.setup.gradeLabel,
-        qualityScore: reading.setup.qualityScore,
-      });
-    }
-    return annotations.slice(-48);
-  }, [allCandles, resolvedSettings.timeframe]);
 
   useEffect(() => {
     if (!replay.enabled || !replay.playing) return undefined;
@@ -240,7 +216,6 @@ export default function App() {
               depthHistory={depthHistory}
               settings={resolvedSettings}
               activeFeatures={activeFeatures}
-              annotations={chartAnnotations}
               onCrosshairMove={setCrosshairData}
               viewCommand={viewCommand}
             />

@@ -3,7 +3,6 @@ import "./Sidebar.css";
 const SIDEBAR_ITEMS = [
   { type: "setting", key: "showDOM", label: "DOM", color: "var(--accent)" },
   { type: "setting", key: "showHeatmap", label: "HEAT", color: "var(--purple)" },
-  { type: "setting", key: "showCallouts", label: "NOTE", color: "var(--yellow)" },
   { type: "feature", key: "vol", label: "VOL", color: "var(--accent)" },
   { type: "feature", key: "fpbs", label: "IMB", color: "var(--green)" },
   { type: "feature", key: "cs", label: "CS", color: "var(--accent)" },

@@ -89,7 +89,7 @@ export default function InfoBar({ candle, settings, instrument }) {
       <div className="ib-sep" />
 
       <div className="ib-group">
-        <span className="ib-label">Signals</span>
+        <span className="ib-label">Flags</span>
         <span className="ib-val">{studySignals.length ? studySignals.join(" ") : "-"}</span>
       </div>
 

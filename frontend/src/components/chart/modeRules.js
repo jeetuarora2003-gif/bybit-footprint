@@ -14,7 +14,7 @@ export const DEFAULT_CHART_SETTINGS = {
   showCrosshair: true,
   showDOM: false,
   showHeatmap: false,
-  showCallouts: true,
+  showCallouts: false,
   vaPercent: 70,
   shadingMode: "adaptive",
   shortNumbers: true,

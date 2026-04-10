@@ -220,13 +220,6 @@ export default function Toolbar({
         >
           Short#
         </button>
-        <button
-          type="button"
-          className={`tb-tab${settings.showCallouts ? " tb-tab--active" : ""}`}
-          onClick={() => updateSetting("showCallouts", !settings.showCallouts)}
-        >
-          Notes
-        </button>
       </div>
 
       <div className="tb-right">

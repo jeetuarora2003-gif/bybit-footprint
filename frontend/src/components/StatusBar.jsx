@@ -98,7 +98,7 @@ export default function StatusBar({
         {studySignals.length > 0 && (
           <>
             <span className="stb-sep">|</span>
-            <span className="stb-info">Signals: {studySignals.join(" ")}</span>
+            <span className="stb-info">Flags: {studySignals.join(" ")}</span>
           </>
         )}
         {replay?.enabled && (
