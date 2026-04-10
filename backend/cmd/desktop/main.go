@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path"
 	"runtime"
@@ -23,14 +25,18 @@ import (
 )
 
 const (
-	bybitBaseURL     = "https://api.bybit.com"
-	minuteMS         = int64(time.Minute / time.Millisecond)
-	maxLimit         = 5000
-	maxBackfillPages = 16
-	maxOIPages       = 16
-	defaultSymbol    = "BTCUSDT"
-	defaultRowSize   = 0.1
-	defaultPort      = 19740
+	bybitBaseURL              = "https://api.bybit.com"
+	minuteMS                  = int64(time.Minute / time.Millisecond)
+	maxLimit                  = 5000
+	maxBackfillPages          = 16
+	maxOIPages                = 16
+	defaultSymbol             = "BTCUSDT"
+	defaultRowSize            = 0.1
+	defaultPort               = 19740
+	defaultFormatterThreshold = 0.65
+	defaultFormatterModel     = "gpt-5"
+	defaultOpenAIBaseURL      = "https://api.openai.com/v1"
+	defaultFormatterTimeout   = 1200 * time.Millisecond
 )
 
 //go:embed web
@@ -125,11 +131,11 @@ type bybitOIResult struct {
 
 type bybitInstrumentResult struct {
 	List []struct {
-		Symbol         string `json:"symbol"`
-		BaseCoin       string `json:"baseCoin"`
-		QuoteCoin      string `json:"quoteCoin"`
-		PriceScale     string `json:"priceScale"`
-		PriceFilter    struct {
+		Symbol      string `json:"symbol"`
+		BaseCoin    string `json:"baseCoin"`
+		QuoteCoin   string `json:"quoteCoin"`
+		PriceScale  string `json:"priceScale"`
+		PriceFilter struct {
 			TickSize string `json:"tickSize"`
 			MinPrice string `json:"minPrice"`
 			MaxPrice string `json:"maxPrice"`
@@ -157,6 +163,49 @@ type instrumentInfo struct {
 	DefaultTicks []int   `json:"defaultTicks"`
 }
 
+type interpretRequest struct {
+	Signal     string  `json:"signal"`
+	Confidence float64 `json:"confidence"`
+	Location   string  `json:"location"`
+	Delta      string  `json:"delta"`
+	Result     string  `json:"result"`
+	Context    string  `json:"context"`
+	Threshold  float64 `json:"threshold"`
+}
+
+type interpretResponse struct {
+	Message string `json:"message"`
+	Source  string `json:"source"`
+	UsedAI  bool   `json:"usedAI"`
+}
+
+type normalizedInterpretSignal struct {
+	Signal     string  `json:"signal"`
+	Confidence float64 `json:"confidence"`
+	Location   string  `json:"location"`
+	Delta      string  `json:"delta"`
+	Result     string  `json:"result"`
+	Context    string  `json:"context"`
+}
+
+type openAIResponsesRequest struct {
+	Model           string         `json:"model"`
+	Reasoning       map[string]any `json:"reasoning,omitempty"`
+	Instructions    string         `json:"instructions"`
+	Input           string         `json:"input"`
+	MaxOutputTokens int            `json:"max_output_tokens"`
+}
+
+type openAIResponsesPayload struct {
+	OutputText string `json:"output_text"`
+	Output     []struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"output"`
+}
+
 func main() {
 	port := flag.Int("port", defaultPort, "local port to use; default keeps desktop storage stable")
 	noOpen := flag.Bool("no-open", false, "disable automatically opening the app in a browser")
@@ -171,6 +220,7 @@ func main() {
 	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/history", handleHistory)
 	mux.HandleFunc("/api/instrument", handleInstrument)
+	mux.HandleFunc("/api/interpret", handleInterpret)
 	mux.Handle("/", makeStaticHandler(static, indexHTML))
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
@@ -328,6 +378,381 @@ func handleInstrument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, instrument)
+}
+
+func handleInterpret(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+
+	var input interpretRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":  "interpret_invalid_json",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	threshold := input.Threshold
+	if threshold <= 0 || threshold > 1 {
+		threshold = defaultFormatterThreshold
+	}
+
+	message, source, usedAI, err := interpretStructuredSignal(r.Context(), input, threshold)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":  "interpret_invalid_signal",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, interpretResponse{
+		Message: message,
+		Source:  source,
+		UsedAI:  usedAI,
+	})
+}
+
+func interpretStructuredSignal(ctx context.Context, input interpretRequest, threshold float64) (string, string, bool, error) {
+	signal, err := normalizeInterpretSignalInput(input)
+	if err != nil {
+		return "", "", false, err
+	}
+
+	fallback := formatSignalWithoutAI(signal, threshold)
+	if signal.Confidence < threshold {
+		return fallback, "deterministic", false, nil
+	}
+
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		return fallback, "deterministic", false, nil
+	}
+
+	formatted, err := callOpenAIFormatter(ctx, signal, threshold, apiKey)
+	if err == nil && validateFormattedOutput(formatted, signal, threshold) {
+		return formatted, "openai", true, nil
+	}
+
+	return fallback, "deterministic", false, nil
+}
+
+func normalizeInterpretSignalInput(input interpretRequest) (normalizedInterpretSignal, error) {
+	normalized := normalizedInterpretSignal{
+		Signal:     normalizeEnum(input.Signal),
+		Confidence: input.Confidence,
+		Location:   normalizeSlug(input.Location),
+		Delta:      normalizeSlug(input.Delta),
+		Result:     normalizeSlug(input.Result),
+		Context:    normalizeSlug(input.Context),
+	}
+
+	if interpretAction(normalized.Signal) == "" {
+		return normalizedInterpretSignal{}, fmt.Errorf("unsupported signal type: %s", strings.TrimSpace(input.Signal))
+	}
+	if math.IsNaN(normalized.Confidence) || math.IsInf(normalized.Confidence, 0) {
+		return normalizedInterpretSignal{}, errors.New("signal confidence must be a number")
+	}
+
+	normalized.Confidence = clampFloat(normalized.Confidence, 0, 1)
+	return normalized, nil
+}
+
+func formatSignalWithoutAI(signal normalizedInterpretSignal, threshold float64) string {
+	if signal.Confidence < threshold {
+		return "WAIT " + formatterDash() + " low confidence"
+	}
+
+	action := interpretAction(signal.Signal)
+	reason := compactWhitespace(strings.Join(buildReasonParts(signal), ", "))
+	return fmt.Sprintf("%s (%d%%) %s %s", action, percent(signal.Confidence), formatterDash(), reason)
+}
+
+func buildReasonParts(signal normalizedInterpretSignal) []string {
+	locationLabel := formatLocationLabel(signal.Location)
+	resultLabel := formatResultLabel(signal.Result)
+	contextLabel := formatContextLabel(signal.Context)
+
+	switch signal.Signal {
+	case "TRAP_SHORT":
+		return []string{
+			compactWhitespace("buyers trapped " + locationLabel),
+			resultLabel,
+			contextLabel,
+		}
+	case "TRAP_LONG":
+		return []string{
+			compactWhitespace("sellers trapped " + locationLabel),
+			resultLabel,
+			contextLabel,
+		}
+	case "CONTINUATION_LONG":
+		return []string{
+			compactWhitespace("buyers in control " + locationLabel),
+			resultLabel,
+			contextLabel,
+		}
+	case "CONTINUATION_SHORT":
+		return []string{
+			compactWhitespace("sellers in control " + locationLabel),
+			resultLabel,
+			contextLabel,
+		}
+	default:
+		return []string{
+			compactWhitespace("no trade " + locationLabel),
+			resultLabel,
+			contextLabel,
+		}
+	}
+}
+
+func callOpenAIFormatter(ctx context.Context, signal normalizedInterpretSignal, threshold float64, apiKey string) (string, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), "/")
+	if baseURL == "" {
+		baseURL = defaultOpenAIBaseURL
+	}
+	model := strings.TrimSpace(os.Getenv("OPENAI_SIGNAL_FORMATTER_MODEL"))
+	if model == "" {
+		model = defaultFormatterModel
+	}
+
+	inputPayload, err := json.Marshal(map[string]any{
+		"threshold": threshold,
+		"signal":    signal,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	requestBody, err := json.Marshal(openAIResponsesRequest{
+		Model: model,
+		Reasoning: map[string]any{
+			"effort": "low",
+		},
+		Instructions: strings.Join([]string{
+			"You convert structured trading signals into one short human-readable line.",
+			"You never analyze raw market data.",
+			"You only translate the structured fields you are given.",
+			"Output exactly one line in this format: ACTION (confidence%) " + formatterDash() + " reason",
+			"If confidence is below threshold, output exactly: WAIT " + formatterDash() + " low confidence",
+			"Allowed actions: TRAP_SHORT=SELL, TRAP_LONG=BUY, CONTINUATION_LONG=BUY, CONTINUATION_SHORT=SELL, NO_TRADE=WAIT",
+			"Reason must combine location, result, and context.",
+			"Do not add commentary, explanations, paragraphs, or extra lines.",
+		}, " "),
+		Input:           string(inputPayload),
+		MaxOutputTokens: 40,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, defaultFormatterTimeout)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, baseURL+"/responses", bytes.NewReader(requestBody))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: defaultFormatterTimeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("OpenAI returned %d", response.StatusCode)
+	}
+
+	var payload openAIResponsesPayload
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+
+	return extractOpenAIResponseText(payload), nil
+}
+
+func extractOpenAIResponseText(payload openAIResponsesPayload) string {
+	if strings.TrimSpace(payload.OutputText) != "" {
+		return compactWhitespace(payload.OutputText)
+	}
+
+	parts := make([]string, 0, len(payload.Output))
+	for _, item := range payload.Output {
+		for _, content := range item.Content {
+			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+				parts = append(parts, strings.TrimSpace(content.Text))
+			}
+		}
+	}
+
+	return compactWhitespace(strings.Join(parts, " "))
+}
+
+func validateFormattedOutput(output string, signal normalizedInterpretSignal, threshold float64) bool {
+	text := compactWhitespace(output)
+	if text == "" {
+		return false
+	}
+
+	if signal.Confidence < threshold {
+		return text == "WAIT "+formatterDash()+" low confidence"
+	}
+
+	action := interpretAction(signal.Signal)
+	if !strings.HasPrefix(text, action+" (") && !(signal.Signal == "NO_TRADE" && strings.HasPrefix(text, "WAIT (")) {
+		return false
+	}
+	if !strings.Contains(text, formatterDash()) {
+		return false
+	}
+	if strings.Contains(text, "\n") {
+		return false
+	}
+	return true
+}
+
+func interpretAction(signal string) string {
+	switch signal {
+	case "TRAP_SHORT", "CONTINUATION_SHORT":
+		return "SELL"
+	case "TRAP_LONG", "CONTINUATION_LONG":
+		return "BUY"
+	case "NO_TRADE":
+		return "WAIT"
+	default:
+		return ""
+	}
+}
+
+func formatLocationLabel(location string) string {
+	switch location {
+	case "resistance":
+		return "at resistance"
+	case "support":
+		return "at support"
+	case "vwap":
+		return "at VWAP"
+	case "value_area_high":
+		return "at value area high"
+	case "value_area_low":
+		return "at value area low"
+	case "range_top":
+		return "at range top"
+	case "range_bottom":
+		return "at range bottom"
+	case "breakout_level":
+		return "at breakout level"
+	case "breakdown_level":
+		return "at breakdown level"
+	case "mid_range":
+		return "mid-range"
+	default:
+		return humanizeSlug(location)
+	}
+}
+
+func formatResultLabel(result string) string {
+	switch result {
+	case "failed_up_move", "failed_breakout":
+		return "failed breakout"
+	case "failed_down_move", "failed_breakdown":
+		return "failed breakdown"
+	case "accepted_above":
+		return "accepted above level"
+	case "accepted_below":
+		return "accepted below level"
+	case "breakout_holding":
+		return "breakout holding"
+	case "breakdown_holding":
+		return "breakdown holding"
+	case "success_up_move":
+		return "up move holding"
+	case "success_down_move":
+		return "down move holding"
+	case "blocked":
+		return "conditions blocked"
+	case "mixed":
+		return "mixed follow-through"
+	default:
+		return humanizeSlug(result)
+	}
+}
+
+func formatContextLabel(context string) string {
+	switch context {
+	case "range_top":
+		return "near range top"
+	case "range_bottom":
+		return "near range bottom"
+	case "range":
+		return "in range"
+	case "trend_up":
+		return "in uptrend"
+	case "trend_down":
+		return "in downtrend"
+	case "bullish_trend":
+		return "in bullish trend"
+	case "bearish_trend":
+		return "in bearish trend"
+	case "pullback":
+		return "during pullback"
+	case "reclaim":
+		return "on reclaim"
+	case "breakdown":
+		return "on breakdown"
+	case "breakout":
+		return "on breakout"
+	case "chop":
+		return "in chop"
+	case "compression":
+		return "in compression"
+	case "mid_range":
+		return "mid-range"
+	default:
+		return humanizeSlug(context)
+	}
+}
+
+func normalizeEnum(value string) string {
+	upper := strings.ToUpper(strings.TrimSpace(value))
+	upper = strings.ReplaceAll(upper, "-", "_")
+	return strings.Join(strings.Fields(upper), "_")
+}
+
+func normalizeSlug(value string) string {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	lower = strings.ReplaceAll(lower, "-", "_")
+	return strings.Join(strings.Fields(lower), "_")
+}
+
+func humanizeSlug(value string) string {
+	return strings.ReplaceAll(normalizeSlug(value), "_", " ")
+}
+
+func compactWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func clampFloat(value float64, minValue float64, maxValue float64) float64 {
+	return math.Max(minValue, math.Min(maxValue, value))
+}
+
+func percent(confidence float64) int {
+	return int(math.Round(confidence * 100))
+}
+
+func formatterDash() string {
+	return "\u2014"
 }
 
 func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, limit int, rowSize float64) ([]historyBar, error) {

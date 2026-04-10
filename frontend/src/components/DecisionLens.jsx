@@ -1,5 +1,10 @@
+import { useEffect, useMemo, useState } from "react";
 import "./DecisionLens.css";
 import { buildDecisionLens } from "../utils/decisionLens";
+import {
+  formatSignalWithoutAI,
+  interpretStructuredSignal,
+} from "../utils/aiSignalInterpreter";
 
 export default function DecisionLens({
   enabled,
@@ -8,9 +13,63 @@ export default function DecisionLens({
   captureStats,
   status,
 }) {
+  const decision = useMemo(
+    () => buildDecisionLens(candle, context, captureStats, status),
+    [candle, context, captureStats, status],
+  );
+  const [aiMessageState, setAiMessageState] = useState({ key: "", message: "" });
+  const decisionKey = useMemo(
+    () => JSON.stringify({
+      formatterInput: decision?.formatterInput || null,
+      threshold: decision?.formatterThreshold || null,
+      headline: decision?.headline || "",
+      reason: decision?.reason || "",
+    }),
+    [decision],
+  );
+  const fallbackMessage = useMemo(() => {
+    if (!enabled) return "";
+    if (!decision?.formatterInput) {
+      return decision?.reason || "WAIT";
+    }
+    return formatSignalWithoutAI(decision.formatterInput, {
+      threshold: decision.formatterThreshold,
+    });
+  }, [decision, enabled]);
+
+  useEffect(() => {
+    if (!enabled || !decision?.formatterInput) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const currentKey = decisionKey;
+    const timeoutId = window.setTimeout(() => {
+      interpretStructuredSignal(decision.formatterInput, {
+        endpointUrl: "/api/interpret",
+        threshold: decision.formatterThreshold,
+        timeoutMs: 900,
+      }).then((nextMessage) => {
+        if (!cancelled) {
+          setAiMessageState({
+            key: currentKey,
+            message: nextMessage,
+          });
+        }
+      }).catch(() => {});
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [decision, decisionKey, enabled]);
+
   if (!enabled) return null;
 
-  const decision = buildDecisionLens(candle, context, captureStats, status);
+  const message = aiMessageState.key === decisionKey && aiMessageState.message
+    ? aiMessageState.message
+    : fallbackMessage;
 
   return (
     <div className={`decision-lens decision-lens--${decision.tone}`}>
@@ -22,6 +81,7 @@ export default function DecisionLens({
           </span>
           <span className="decision-lens__confidence">{decision.confidence}%</span>
         </div>
+        <div className="decision-lens__message">{message || decision.reason}</div>
         <div className="decision-lens__reason">{decision.reason}</div>
         {decision.rows?.length > 0 && (
           <div className="decision-lens__rows">

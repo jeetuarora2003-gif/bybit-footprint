@@ -4,6 +4,7 @@ const TRADE_FRESH_MS = 6_000;
 const DEPTH_FRESH_MS = 12_000;
 const OI_FRESH_MS = 20_000;
 const MIN_SIGNAL_CONFIDENCE = 75;
+const FORMATTER_THRESHOLD = 0.65;
 
 function average(values) {
   if (!Array.isArray(values) || values.length === 0) return 0;
@@ -165,7 +166,7 @@ function buildLocationCandidates(candle, context, threshold) {
   if (largestAsk) upperCandidates.push({ kind: "ask shelf", price: Number(largestAsk.price) || 0 });
   if (largestBid) lowerCandidates.push({ kind: "bid shelf", price: Number(largestBid.price) || 0 });
 
-  const chooseNearest = (candidates, referencePrice) => {
+  const chooseNearest = (candidates, referencePrice, side) => {
     const valid = candidates
       .filter((candidate) => Number.isFinite(candidate.price) && candidate.price > 0)
       .map((candidate) => {
@@ -175,6 +176,7 @@ function buildLocationCandidates(candle, context, threshold) {
           ...candidate,
           distance,
           touches,
+          side,
         };
       })
       .filter((candidate) => candidate.distance <= threshold)
@@ -184,8 +186,44 @@ function buildLocationCandidates(candle, context, threshold) {
   };
 
   return {
-    upper: chooseNearest(upperCandidates, activeHigh || activeClose),
-    lower: chooseNearest(lowerCandidates, activeLow || activeClose),
+    upper: chooseNearest(upperCandidates, activeHigh || activeClose, "upper"),
+    lower: chooseNearest(lowerCandidates, activeLow || activeClose, "lower"),
+  };
+}
+
+function resolveFormatterLocation(location) {
+  const kind = String(location?.kind || "").toLowerCase();
+  if (!kind) return "mid_range";
+  if (kind === "vwap") return "vwap";
+  if (kind.includes("low") || kind.includes("bid")) return "support";
+  if (kind.includes("high") || kind.includes("ask")) return "resistance";
+  return "mid_range";
+}
+
+function resolveFormatterContext(marketState, location) {
+  if (marketState.state === "COMPRESSION") return "compression";
+  if (marketState.biasedTrend === "bullish") return "trend_up";
+  if (marketState.biasedTrend === "bearish") return "trend_down";
+  if (location?.side === "upper") return "range_top";
+  if (location?.side === "lower") return "range_bottom";
+  return "range";
+}
+
+function buildFormatterInput({
+  signal,
+  confidence,
+  location,
+  delta,
+  result,
+  context,
+}) {
+  return {
+    signal,
+    confidence: clamp(Number(confidence) || 0, 0, 1),
+    location,
+    delta,
+    result,
+    context,
   };
 }
 
@@ -236,6 +274,8 @@ function buildNoTrade({
   location,
   marketState,
   confidence = 0,
+  formatterConfidence = 0.82,
+  result = "blocked",
 }) {
   return {
     status: "NO TRADE",
@@ -245,6 +285,15 @@ function buildNoTrade({
     confidence,
     state,
     reason,
+    formatterThreshold: FORMATTER_THRESHOLD,
+    formatterInput: buildFormatterInput({
+      signal: "NO_TRADE",
+      confidence: formatterConfidence,
+      location: resolveFormatterLocation(location),
+      delta: "mixed",
+      result,
+      context: resolveFormatterContext(marketState, location),
+    }),
     rows: [
       { label: "State", value: state },
       { label: "Gate", value: reason },
@@ -272,6 +321,8 @@ export function buildDecisionLens(candle, context, captureStats, status) {
       confidence: 0,
       state: "NO DATA",
       reason: "No candle selected",
+      formatterThreshold: FORMATTER_THRESHOLD,
+      formatterInput: null,
       rows: [],
     };
   }
@@ -290,6 +341,8 @@ export function buildDecisionLens(candle, context, captureStats, status) {
       reason: `${quality.label} bars are blocked`,
       location: location.upper || location.lower,
       marketState,
+      formatterConfidence: 0.84,
+      result: "blocked",
     });
   }
 
@@ -301,6 +354,8 @@ export function buildDecisionLens(candle, context, captureStats, status) {
       reason: feed.reason,
       location: location.upper || location.lower,
       marketState,
+      formatterConfidence: 0.86,
+      result: "blocked",
     });
   }
 
@@ -310,6 +365,8 @@ export function buildDecisionLens(candle, context, captureStats, status) {
       reason: "Compression / chop filter active",
       location: location.upper || location.lower,
       marketState,
+      formatterConfidence: 0.88,
+      result: "blocked",
     });
   }
 
@@ -371,6 +428,8 @@ export function buildDecisionLens(candle, context, captureStats, status) {
       reason: gateReason,
       location: shortLocation || longLocation,
       marketState,
+      formatterConfidence: !shortLocation && !longLocation ? 0.82 : 0.58,
+      result: !shortLocation && !longLocation ? "blocked" : "mixed",
     });
   }
 
@@ -397,6 +456,8 @@ export function buildDecisionLens(candle, context, captureStats, status) {
       location: chosenLocation,
       marketState,
       confidence,
+      formatterConfidence: 0.6,
+      result: "mixed",
     });
   }
 
@@ -412,6 +473,15 @@ export function buildDecisionLens(candle, context, captureStats, status) {
     confidence,
     state,
     reason,
+    formatterThreshold: FORMATTER_THRESHOLD,
+    formatterInput: buildFormatterInput({
+      signal: shortTrapCandidate ? "TRAP_SHORT" : "TRAP_LONG",
+      confidence: confidence / 100,
+      location: resolveFormatterLocation(chosenLocation),
+      delta: delta >= 0 ? "strong_positive" : "strong_negative",
+      result: shortTrapCandidate ? "failed_up_move" : "failed_down_move",
+      context: resolveFormatterContext(marketState, chosenLocation),
+    }),
     rows: [
       { label: "State", value: state },
       { label: "Signal", value: `${direction} trap allowed` },

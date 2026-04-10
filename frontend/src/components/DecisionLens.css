@@ -73,10 +73,16 @@
   font-weight: 700;
 }
 
+.decision-lens__message {
+  color: var(--text-bright, var(--text));
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
 .decision-lens__reason {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--text-dim, var(--text-muted));
+  font-size: 11px;
   margin-top: 4px;
 }
 

@@ -10,6 +10,7 @@ const DEFAULT_THRESHOLD = 0.65;
 const DEFAULT_MODEL = "gpt-5";
 const DEFAULT_TIMEOUT_MS = 2000;
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
+const EM_DASH = "\u2014";
 
 const LOCATION_LABELS = {
   resistance: "at resistance",
@@ -160,7 +161,7 @@ function validateFormattedOutput(output, signal, threshold) {
   if (!text) return false;
 
   if (signal.confidence < threshold) {
-    return text === "WAIT — low confidence";
+    return text === `WAIT ${EM_DASH} low confidence`;
   }
 
   const allowedAction = ACTION_BY_SIGNAL[signal.signal];
@@ -168,7 +169,7 @@ function validateFormattedOutput(output, signal, threshold) {
     return false;
   }
 
-  if (!text.includes("—")) return false;
+  if (!text.includes(EM_DASH)) return false;
   if (text.includes("\n")) return false;
   return true;
 }
@@ -190,17 +191,56 @@ function extractResponseText(payload) {
   return compactWhitespace(parts.join(" "));
 }
 
+async function callFormatterEndpoint(signal, options = {}) {
+  const endpointUrl = compactWhitespace(options.endpointUrl || "");
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (!endpointUrl || typeof fetchImpl !== "function") {
+    throw new Error("Formatter endpoint requires endpointUrl and fetch");
+  }
+
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(new Error("Formatter endpoint timeout")), timeoutMs)
+    : null;
+
+  try {
+    const response = await fetchImpl(endpointUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...signal,
+        threshold: Number.isFinite(options.threshold) ? options.threshold : DEFAULT_THRESHOLD,
+      }),
+      signal: controller?.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Formatter endpoint failed: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    return compactWhitespace(payload?.message || payload?.text || "");
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 export function formatSignalWithoutAI(input, options = {}) {
   const threshold = Number.isFinite(options.threshold) ? options.threshold : DEFAULT_THRESHOLD;
   const signal = normalizeSignalInput(input);
 
   if (signal.confidence < threshold) {
-    return "WAIT — low confidence";
+    return `WAIT ${EM_DASH} low confidence`;
   }
 
   const action = ACTION_BY_SIGNAL[signal.signal];
   const reason = sanitizeReason(buildReasonParts(signal));
-  return `${action} (${percent(signal.confidence)}%) — ${reason}`;
+  return `${action} (${percent(signal.confidence)}%) ${EM_DASH} ${reason}`;
 }
 
 export function buildAISignalFormatterPrompt(input, options = {}) {
@@ -212,8 +252,8 @@ export function buildAISignalFormatterPrompt(input, options = {}) {
       "You convert structured trading signals into one short human-readable line.",
       "You never analyze raw market data.",
       "You only translate the structured fields you are given.",
-      "Output exactly one line in this format: ACTION (confidence%) — reason",
-      "If confidence is below threshold, output exactly: WAIT — low confidence",
+      `Output exactly one line in this format: ACTION (confidence%) ${EM_DASH} reason`,
+      `If confidence is below threshold, output exactly: WAIT ${EM_DASH} low confidence`,
       "Allowed actions: TRAP_SHORT=SELL, TRAP_LONG=BUY, CONTINUATION_LONG=BUY, CONTINUATION_SHORT=SELL, NO_TRADE=WAIT",
       "Reason must combine location, result, and context.",
       "Do not add commentary, explanations, paragraphs, or extra lines.",
@@ -276,7 +316,7 @@ export async function interpretStructuredSignal(input, options = {}) {
   const signal = normalizeSignalInput(input);
 
   if (signal.confidence < threshold) {
-    return "WAIT — low confidence";
+    return `WAIT ${EM_DASH} low confidence`;
   }
 
   if (typeof options.mockResponse === "string") {
@@ -288,6 +328,20 @@ export async function interpretStructuredSignal(input, options = {}) {
 
   if (options.useAI === false) {
     return formatSignalWithoutAI(signal, { threshold });
+  }
+
+  if (options.endpointUrl) {
+    try {
+      const endpointText = await callFormatterEndpoint(signal, {
+        ...options,
+        threshold,
+      });
+      if (validateFormattedOutput(endpointText, signal, threshold)) {
+        return endpointText;
+      }
+    } catch {
+      // Fallback below keeps the path deterministic and real-time safe.
+    }
   }
 
   try {

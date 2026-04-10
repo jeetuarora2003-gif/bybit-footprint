@@ -220,17 +220,18 @@ export default function Toolbar({
         >
           Short#
         </button>
-        <button
-          type="button"
-          className={`tb-tab${settings.decisionLens ? " tb-tab--active" : ""}`}
-          onClick={() => updateSetting("decisionLens", !settings.decisionLens)}
-          title="Strict trap-only decision filter"
-        >
-          Lens
-        </button>
       </div>
 
       <div className="tb-right">
+        <button
+          type="button"
+          className={`tb-btn tb-btn--lens${settings.decisionLens ? " tb-btn--active" : ""}`}
+          onClick={() => updateSetting("decisionLens", !settings.decisionLens)}
+          title="Decision Lens toggle"
+        >
+          Decision Lens
+        </button>
+        <div className="tb-sep" />
         {replay?.enabled ? (
           <>
             <button type="button" className="tb-btn tb-btn--accent" onClick={onStopReplay}>Exit Replay</button>
