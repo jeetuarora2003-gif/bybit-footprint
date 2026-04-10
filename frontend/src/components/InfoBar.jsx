@@ -7,7 +7,12 @@ import {
   formatShortOriginalValue,
   formatSignedShortOriginalValue,
 } from "../utils/exoFormat";
-import { summarizeCandleImbalance, summarizeStudySignals } from "../utils/orderflow";
+import {
+  describeCandleDataQuality,
+  formatCandleDataSource,
+  summarizeCandleImbalance,
+  summarizeStudySignals,
+} from "../utils/orderflow";
 
 const CLUSTER_LABELS = {
   void: "Void",
@@ -24,6 +29,8 @@ export default function InfoBar({ candle, settings, instrument }) {
   const hasReliableOrderflow = Number(current?.orderflow_coverage ?? 0) >= 0.999;
   const imbalance = hasReliableOrderflow ? summarizeCandleImbalance(current) : null;
   const studySignals = hasReliableOrderflow ? summarizeStudySignals(current).slice(0, 3) : [];
+  const quality = current ? describeCandleDataQuality(current) : null;
+  const coverage = current ? `${((Number(current.orderflow_coverage) || 0) * 100).toFixed(1)}%` : "-";
 
   return (
     <div className="info-bar">
@@ -83,6 +90,18 @@ export default function InfoBar({ candle, settings, instrument }) {
         <span className="ib-label">OI d:</span>
         <span className="ib-val" style={{ color: current?.oi_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
           {current?.oi_delta != null ? formatSignedShortOriginalValue(current.oi_delta, 1) : "-"}
+        </span>
+      </div>
+
+      <div className="ib-sep" />
+
+      <div className="ib-group">
+        <span className="ib-label">Src</span>
+        <span className="ib-val">{current ? formatCandleDataSource(current) : "-"}</span>
+        <span className="ib-label">Cov</span>
+        <span className="ib-val">{coverage}</span>
+        <span className={`ib-badge ib-badge--${quality?.tone || "muted"}`}>
+          {quality?.label || "No data"}
         </span>
       </div>
 

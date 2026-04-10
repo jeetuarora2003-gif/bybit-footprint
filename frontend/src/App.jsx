@@ -3,6 +3,7 @@ import useWebSocket from "./hooks/useWebSocket";
 import Toolbar from "./components/Toolbar";
 import Sidebar from "./components/Sidebar";
 import InfoBar from "./components/InfoBar";
+import CaptureHealth from "./components/CaptureHealth";
 import OrderflowReading from "./components/OrderflowReading";
 import ChartCanvas from "./components/ChartCanvas";
 import SubPanels from "./components/SubPanels";
@@ -201,6 +202,11 @@ export default function App() {
         onCycleReplaySpeed={cycleReplaySpeed}
       />
       <InfoBar candle={infoCandle} settings={resolvedSettings} instrument={instrument} />
+      <CaptureHealth
+        status={status}
+        captureStats={captureStats}
+        liveCandle={liveCandle}
+      />
       <OrderflowReading candle={infoCandle} context={readingContext} />
       <div className="app-body">
         <Sidebar

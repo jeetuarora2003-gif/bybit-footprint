@@ -145,6 +145,10 @@ export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol 
     tradeEvents: 0,
     depthEvents: 0,
     depthSnapshots: 0,
+    lastTradeTimestamp: 0,
+    lastDepthTimestamp: 0,
+    lastTickerTimestamp: 0,
+    reconnectCount: 0,
   });
   const [replayState, setReplayState] = useState({
     available: false,
@@ -228,6 +232,10 @@ export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol 
           tradeEvents: Number(payload?.tradeEvents) || 0,
           depthEvents: Number(payload?.depthEvents) || 0,
           depthSnapshots: Number(payload?.depthSnapshots) || 0,
+          lastTradeTimestamp: Number(payload?.lastTradeTimestamp) || 0,
+          lastDepthTimestamp: Number(payload?.lastDepthTimestamp) || 0,
+          lastTickerTimestamp: Number(payload?.lastTickerTimestamp) || 0,
+          reconnectCount: Number(payload?.reconnectCount) || 0,
         });
       }
     };

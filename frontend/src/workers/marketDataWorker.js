@@ -116,6 +116,10 @@ function createEngine() {
     lastDepthSnapshotPersistTs: 0,
     lastTradeSeq: 0,
     lastDepthSeq: 0,
+    lastTradeTimestamp: 0,
+    lastDepthTimestamp: 0,
+    lastTickerTimestamp: 0,
+    reconnectCount: 0,
     seenTradeIds: [],
     seenTradeSet: new Set(),
     lastBroadcastLiveOpenTime: null,
@@ -155,6 +159,10 @@ function createEngine() {
     state.lastDepthSnapshotPersistTs = 0;
     state.lastTradeSeq = 0;
     state.lastDepthSeq = 0;
+    state.lastTradeTimestamp = 0;
+    state.lastDepthTimestamp = 0;
+    state.lastTickerTimestamp = 0;
+    state.reconnectCount = 0;
     state.seenTradeIds = [];
     state.seenTradeSet = new Set();
     state.lastBroadcastLiveOpenTime = null;
@@ -544,6 +552,8 @@ function createEngine() {
     ws.onerror = () => {};
     ws.onclose = () => {
       if (state.shuttingDown) return;
+      state.reconnectCount += 1;
+      emitCaptureStats();
       setStatus("disconnected");
       if (state.heartbeatId) {
         clearInterval(state.heartbeatId);
@@ -643,6 +653,7 @@ function createEngine() {
     if (seq > state.lastTradeSeq) {
       state.lastTradeSeq = seq;
     }
+    state.lastTradeTimestamp = Math.max(state.lastTradeTimestamp, timestamp);
 
     recordTradeEvent({
       event_id: buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }),
@@ -709,6 +720,7 @@ function createEngine() {
     state.bestBidSize = best.bestBidSize;
     state.bestAsk = best.bestAsk;
     state.bestAskSize = best.bestAskSize;
+    state.lastDepthTimestamp = Math.max(state.lastDepthTimestamp, timestamp);
 
     recordDepthEvent({
       event_id: buildDepthEventId({
@@ -732,9 +744,12 @@ function createEngine() {
 
   function handleTickerEnvelope(message) {
     const payload = Array.isArray(message?.data) ? message.data[0] : message?.data;
+    const timestamp = Number(message?.ts) || Date.now();
     const oi = Number.parseFloat(payload?.openInterest);
     if (Number.isFinite(oi) && oi > 0) {
       state.currentOI = round6(oi);
+      state.lastTickerTimestamp = Math.max(state.lastTickerTimestamp, timestamp);
+      emitCaptureStats();
     }
   }
 
@@ -1250,6 +1265,10 @@ function createEngine() {
         tradeEvents: state.tradeHistory.length,
         depthEvents: state.depthEvents.length,
         depthSnapshots: state.depthHistory.length,
+        lastTradeTimestamp: state.lastTradeTimestamp,
+        lastDepthTimestamp: state.lastDepthTimestamp,
+        lastTickerTimestamp: state.lastTickerTimestamp,
+        reconnectCount: state.reconnectCount,
       },
     });
   }

@@ -44,6 +44,8 @@ export function summarizeStudySignals(candle) {
   if (candle.sweep_sell) tags.push("SWEEP DN")
   if (candle.delta_divergence_bull) tags.push("DIV BULL")
   if (candle.delta_divergence_bear) tags.push("DIV BEAR")
+  if ((Number(candle?.close) || 0) > (Number(candle?.open) || 0) && (Number(candle?.candle_delta) || 0) < 0) tags.push("SELL FAIL")
+  if ((Number(candle?.close) || 0) < (Number(candle?.open) || 0) && (Number(candle?.candle_delta) || 0) > 0) tags.push("BUY FAIL")
   if (candle.unfinished_low) tags.push("UNF LOW")
   if (candle.unfinished_high) tags.push("UNF HIGH")
 
@@ -228,6 +230,23 @@ function describeDataQuality(candle, reliable) {
   }
 }
 
+export function describeCandleDataQuality(candle) {
+  return describeDataQuality(candle, isReliableOrderflow(candle))
+}
+
+export function formatCandleDataSource(candle) {
+  const source = String(candle?.data_source || "").toLowerCase()
+  if (source === "live_trade_footprint") return "Live trade footprint"
+  if (source === "replay_trade_footprint") return "Replay trade footprint"
+  if (source === "bybit_kline_backfill") {
+    return (Number(candle?.oi) || 0) > 0 ? "Backfill OHLC + OI" : "Backfill OHLC"
+  }
+  if (source === "mixed") return "Mixed source"
+  if (Number(candle?.orderflow_coverage ?? 0) >= 0.999) return "Live trade footprint"
+  if ((Number(candle?.oi) || 0) > 0) return "Backfill OHLC + OI"
+  return "Backfill OHLC"
+}
+
 function buildPriceRow(candle) {
   const rowSize = Number(candle?.row_size) || 0.1
   const range = (Number(candle?.high) || 0) - (Number(candle?.low) || 0)
@@ -302,6 +321,13 @@ function buildImbalanceRow(candle) {
   return {
     label: "Imbalance",
     value: `${imbalance.side.toUpperCase()} ${imbalance.stacked ? "stacked" : "single"} | ${imbalance.count} flagged prints | Strongest ${formatCompact(imbalance.value)}`,
+  }
+}
+
+function buildSourceRow(candle) {
+  return {
+    label: "Source",
+    value: `${formatCandleDataSource(candle)} | Coverage ${formatCoverage(candle?.orderflow_coverage ?? 0)}`,
   }
 }
 
@@ -383,6 +409,58 @@ function buildContextRow(candle, previousCandle, recentCandles) {
   }
 }
 
+export function summarizeTrapObservation(candle, previousCandle) {
+  if (!candle) {
+    return {
+      label: "Trap",
+      value: "No candle selected",
+      chip: null,
+    }
+  }
+
+  const rowSize = Math.max(Number(candle?.row_size) || 0.1, 0.0001)
+  const referenceClose = Number(previousCandle?.close)
+  const anchorPrice = Number.isFinite(referenceClose) && referenceClose > 0
+    ? referenceClose
+    : Number(candle?.open) || 0
+  const priceChange = (Number(candle?.close) || 0) - anchorPrice
+  const range = Math.abs((Number(candle?.high) || 0) - (Number(candle?.low) || 0))
+  const priceThreshold = Math.max(rowSize * 2, range * 0.18, rowSize)
+  const delta = Number(candle?.candle_delta) || 0
+  const volume = Number(candle?.total_volume) || 0
+  const deltaThreshold = Math.max(volume * 0.08, 1)
+  const currentOI = Number(candle?.oi) || 0
+  const previousOI = Number(previousCandle?.oi) || 0
+  const oiDelta = currentOI > 0 && previousOI > 0
+    ? currentOI - previousOI
+    : Number(candle?.oi_delta) || 0
+  const oiText = Number.isFinite(oiDelta) && oiDelta !== 0
+    ? ` | OI ${formatSignedCompact(oiDelta)}`
+    : ""
+
+  if (priceChange <= -priceThreshold && delta >= deltaThreshold) {
+    return {
+      label: "Trap",
+      value: `Buy aggression failed: close ${formatSignedPrice(priceChange, rowSize)} vs reference while delta stayed ${formatSignedCompact(delta)}${oiText}`,
+      chip: oiDelta > 0 ? "BUY FAIL + OI" : "BUY FAIL",
+    }
+  }
+
+  if (priceChange >= priceThreshold && delta <= -deltaThreshold) {
+    return {
+      label: "Trap",
+      value: `Sell aggression failed: close ${formatSignedPrice(priceChange, rowSize)} vs reference while delta stayed ${formatSignedCompact(delta)}${oiText}`,
+      chip: oiDelta > 0 ? "SELL FAIL + OI" : "SELL FAIL",
+    }
+  }
+
+  return {
+    label: "Trap",
+    value: "No clear price-flow trap on this bar",
+    chip: null,
+  }
+}
+
 function buildFlagsRow(candle) {
   const flags = summarizeStudySignals(candle)
   return {
@@ -411,20 +489,24 @@ export function buildOrderflowReading(candle, context) {
   const readingContext = normalizeReadingContext(context)
   const reliable = isReliableOrderflow(candle)
   const dataQuality = describeDataQuality(candle, reliable)
+  const trapObservation = summarizeTrapObservation(candle, readingContext.previousCandle)
   const rows = [
     buildPriceRow(candle),
     buildVolumeRow(candle),
     buildFlowRow(candle, readingContext.previousCandle, reliable),
     buildOIRow(candle, readingContext.previousCandle),
+    buildSourceRow(candle),
     buildImbalanceRow(candle),
     buildLiquidityRow(candle),
     buildContextRow(candle, readingContext.previousCandle, readingContext.recentCandles),
+    trapObservation,
     buildFlagsRow(candle),
     { label: "Quality", value: dataQuality.row },
   ]
 
   const chips = []
   pushUnique(chips, dataQuality.chip)
+  pushUnique(chips, trapObservation.chip)
 
   const studySignals = summarizeStudySignals(candle)
   for (const tag of studySignals.slice(0, 6)) {

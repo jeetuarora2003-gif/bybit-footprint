@@ -88,6 +88,8 @@ export function drawCandle(
     }
   }
 
+  drawDataQualityMarker(ctx, candle, centerX, candleW, yHigh, yLow);
+
   if (!clusters?.length || settings.clusterMode === "void") return;
 
   const candleRowSize = Number(candle.row_size) || rowSize;
@@ -523,4 +525,46 @@ function drawStudySignals(ctx, candle, centerX, yHigh, yLow, candleW) {
     ctx.closePath();
     ctx.fill();
   }
+
+  const sellAggressionFailed = (Number(candle?.close) || 0) > (Number(candle?.open) || 0) && (Number(candle?.candle_delta) || 0) < 0;
+  const buyAggressionFailed = (Number(candle?.close) || 0) < (Number(candle?.open) || 0) && (Number(candle?.candle_delta) || 0) > 0;
+  if (sellAggressionFailed || buyAggressionFailed) {
+    const tagY = sellAggressionFailed ? Math.max(2, topY - 14) : bottomY + 14;
+    const tagText = sellAggressionFailed ? "SF" : "BF";
+    const boxWidth = 16;
+    ctx.fillStyle = "rgba(15,23,42,0.92)";
+    ctx.fillRect(centerX - boxWidth / 2, tagY, boxWidth, 11);
+    ctx.strokeStyle = sellAggressionFailed ? "rgba(66,165,245,0.88)" : "rgba(239,83,80,0.9)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(centerX - boxWidth / 2 + 0.5, tagY + 0.5, boxWidth - 1, 10);
+    ctx.fillStyle = sellAggressionFailed ? "rgba(66,165,245,0.94)" : "rgba(239,83,80,0.94)";
+    ctx.font = "bold 8px 'JetBrains Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(tagText, centerX, tagY + 5.5);
+  }
+}
+
+function drawDataQualityMarker(ctx, candle, centerX, candleW, yHigh, yLow) {
+  if (candleW < 6) return;
+
+  const coverage = Number(candle?.orderflow_coverage) || 0;
+  const source = String(candle?.data_source || "").toLowerCase();
+  let color = "rgba(107,114,128,0.8)";
+
+  if (source === "replay_trade_footprint") {
+    color = "rgba(168,85,247,0.86)";
+  } else if (coverage >= 0.999) {
+    color = "rgba(38,166,154,0.88)";
+  } else if ((Number(candle?.oi) || 0) > 0 || coverage > 0) {
+    color = "rgba(250,204,21,0.84)";
+  }
+
+  const markerWidth = Math.max(2, Math.min(4, candleW * 0.08));
+  const markerX = centerX - candleW / 2 + 1;
+  const markerY = Math.min(yHigh, yLow);
+  const markerHeight = Math.max(6, Math.abs(yLow - yHigh));
+
+  ctx.fillStyle = color;
+  ctx.fillRect(markerX, markerY, markerWidth, markerHeight);
 }

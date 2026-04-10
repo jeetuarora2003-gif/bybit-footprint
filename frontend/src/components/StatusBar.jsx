@@ -5,7 +5,7 @@ import {
   formatPrice,
   formatShortOriginalValue,
 } from "../utils/exoFormat";
-import { summarizeStudySignals } from "../utils/orderflow";
+import { formatCandleDataSource, summarizeStudySignals } from "../utils/orderflow";
 
 const CLUSTER_LABELS = {
   void: "Void",
@@ -43,6 +43,7 @@ export default function StatusBar({
   const referenceCandle = crosshairData ?? liveCandle;
   const hasReliableOrderflow = Number(referenceCandle?.orderflow_coverage ?? 0) >= 0.999;
   const studySignals = summarizeStudySignals(referenceCandle).slice(0, 2);
+  const coverage = referenceCandle ? `${((Number(referenceCandle.orderflow_coverage) || 0) * 100).toFixed(1)}%` : "-";
   const replayTime = replay?.enabled && liveCandle?.candle_open_time
     ? new Date(Number(liveCandle.candle_open_time)).toLocaleTimeString([], {
       hour: "2-digit",
@@ -86,6 +87,10 @@ export default function StatusBar({
         <span className="stb-sep">|</span>
         <span className="stb-info">
           OI: {referenceCandle?.oi != null ? formatShortOriginalValue(referenceCandle.oi, 1) : "-"}
+        </span>
+        <span className="stb-sep">|</span>
+        <span className="stb-info">
+          Src: {referenceCandle ? `${formatCandleDataSource(referenceCandle)} ${coverage}` : "-"}
         </span>
         <span className="stb-sep">|</span>
         <span className="stb-info">

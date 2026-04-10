@@ -40,6 +40,31 @@
   font-weight: 500;
 }
 
+.ib-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ib-badge--live {
+  color: #9ddbf7;
+  background: rgba(38, 166, 154, 0.14);
+}
+
+.ib-badge--caution {
+  color: #ffe58f;
+  background: rgba(250, 204, 21, 0.14);
+}
+
+.ib-badge--muted {
+  color: #cbd5e1;
+  background: rgba(107, 114, 128, 0.18);
+}
+
 .ib-green { color: var(--green); }
 .ib-red   { color: var(--red); }
 
