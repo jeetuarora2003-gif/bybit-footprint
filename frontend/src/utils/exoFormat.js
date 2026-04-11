@@ -6,12 +6,21 @@ export function formatPrice(value, digits = 1) {
   });
 }
 
-const BYBIT_QTY_STEP = 0.001;
+let displayQuantityStep = 1;
 
-function toDisplayLots(value) {
+function normalizeQuantityStep(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 1;
+}
+
+export function configureFootprintFormatter(options = {}) {
+  displayQuantityStep = normalizeQuantityStep(options.quantityStep);
+}
+
+function toDisplayLots(value, quantityStep = displayQuantityStep) {
   if (value == null || Number.isNaN(Number(value))) return null;
-  // Exocharts-style quantity readouts are easier to scan in whole lot units.
-  return Math.round(Number(value) / BYBIT_QTY_STEP);
+  // Display volume in exchange-native contract/lot units for the active instrument.
+  return Math.round(Number(value) / normalizeQuantityStep(quantityStep));
 }
 
 function formatWholeNumber(value) {
@@ -67,14 +76,14 @@ export function formatSignedShortOriginalValue(value, digits = 1) {
   return "0";
 }
 
-export function formatCompactValue(value) {
-  const lots = toDisplayLots(value);
+export function formatCompactValue(value, options = {}) {
+  const lots = toDisplayLots(value, options.quantityStep);
   if (lots == null) return "-";
   return formatShortWholeNumber(lots);
 }
 
-export function formatSignedCompactValue(value) {
-  const lots = toDisplayLots(value);
+export function formatSignedCompactValue(value, options = {}) {
+  const lots = toDisplayLots(value, options.quantityStep);
   if (lots == null) return "-";
   const formatted = formatShortWholeNumber(Math.abs(lots));
   if (lots > 0) return `+${formatted}`;
@@ -83,7 +92,7 @@ export function formatSignedCompactValue(value) {
 }
 
 export function formatFootprintValue(value, options = {}) {
-  const lots = toDisplayLots(value) ?? 0;
+  const lots = toDisplayLots(value, options.quantityStep) ?? 0;
   if (lots === 0) return "";
 
   const { signed = false, shortNumbers = false } = options;

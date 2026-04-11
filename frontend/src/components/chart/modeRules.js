@@ -2,7 +2,7 @@ export const DEFAULT_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars"
 export const CLASSIC_FEATURES = ["vol", "fpbs", "tcount", "tsize", "cs", "dbars", "oi", "hl", "vwap"];
 
 export const DEFAULT_CHART_SETTINGS = {
-  symbol: "BTCUSDT",
+  symbol: "BTCUSD",
   baseRowSize: 0.1,
   clusterMode: "bidAskProfile",
   candleStyle: "borderedCandle",

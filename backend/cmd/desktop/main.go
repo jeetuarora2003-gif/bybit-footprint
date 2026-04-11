@@ -30,7 +30,7 @@ const (
 	maxLimit                  = 5000
 	maxBackfillPages          = 16
 	maxOIPages                = 16
-	defaultSymbol             = "BTCUSDT"
+	defaultSymbol             = "BTCUSD"
 	defaultRowSize            = 0.1
 	defaultPort               = 19740
 	defaultFormatterThreshold = 0.65
@@ -763,7 +763,7 @@ func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, 
 	for page := 0; page < maxBackfillPages && len(barsByOpenTime) < limit; page++ {
 		var result bybitKlineResult
 		err := fetchBybitResult(ctx, client, "/v5/market/kline", map[string]string{
-			"category": "linear",
+			"category": "inverse",
 			"symbol":   symbol,
 			"interval": "1",
 			"limit":    strconv.Itoa(pageLimit),
@@ -863,7 +863,7 @@ func fetchOpenInterestHistory(
 
 	for page := 0; page < maxOIPages; page++ {
 		params := map[string]string{
-			"category":     "linear",
+			"category":     "inverse",
 			"symbol":       symbol,
 			"intervalTime": "5min",
 			"limit":        "200",
@@ -921,7 +921,7 @@ func fetchOpenInterestHistory(
 func fetchInstrumentInfo(ctx context.Context, client *http.Client, symbol string) (instrumentInfo, error) {
 	var result bybitInstrumentResult
 	if err := fetchBybitResult(ctx, client, "/v5/market/instruments-info", map[string]string{
-		"category": "linear",
+		"category": "inverse",
 		"symbol":   symbol,
 	}, &result); err != nil {
 		return instrumentInfo{}, err

@@ -22,7 +22,7 @@ function transactionDone(transaction) {
 }
 
 function normalizeSymbol(symbol) {
-  return String(symbol || "BTCUSDT").trim().toUpperCase() || "BTCUSDT";
+  return String(symbol || "BTCUSD").trim().toUpperCase() || "BTCUSD";
 }
 
 function paddedKey(value) {

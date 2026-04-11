@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const DEFAULT_SYMBOL = "BTCUSDT";
+const DEFAULT_SYMBOL = "BTCUSD";
+
+function normalizeInverseSymbol(symbol) {
+  const normalized = String(symbol || DEFAULT_SYMBOL).trim().toUpperCase();
+  if (!normalized) return DEFAULT_SYMBOL;
+  return normalized === "BTCUSDT" ? DEFAULT_SYMBOL : normalized;
+}
 
 function resolveProxyBase() {
   const configured = import.meta.env.VITE_PROXY_BASE_URL;
@@ -135,7 +141,7 @@ function normalizeInstrument(payload, fallbackSymbol) {
 }
 
 export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol = DEFAULT_SYMBOL } = {}) {
-  const normalizedSymbol = String(symbol || DEFAULT_SYMBOL).trim().toUpperCase() || DEFAULT_SYMBOL;
+  const normalizedSymbol = normalizeInverseSymbol(symbol);
   const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
   const [depthHistory, setDepthHistory] = useState([]);

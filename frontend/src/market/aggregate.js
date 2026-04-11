@@ -278,24 +278,27 @@ export function annotateClusterSignals(clusters, studyConfig = DEFAULT_STUDY_CON
       summary.largeTradeCount += 1;
     }
 
+    // Exocharts-style imbalance compares diagonally:
+    // ask/buy volume at the current price against bid/sell volume one level below,
+    // and bid/sell volume at the current price against ask/buy volume one level above.
     if (index > 0) {
       const below = clusters[index - 1];
-      if (below.buyVol > 0
-        && cluster.sellVol >= below.buyVol * studyConfig.imbalance_threshold
-        && cluster.sellVol >= studyConfig.min_imbalance_volume) {
-        bearish[index] = true;
-        cluster.imbalance_sell = true;
+      if (below.sellVol > 0
+        && cluster.buyVol >= below.sellVol * studyConfig.imbalance_threshold
+        && cluster.buyVol >= studyConfig.min_imbalance_volume) {
+        bullish[index] = true;
+        cluster.imbalance_buy = true;
         summary.imbalanceCount += 1;
       }
     }
 
     if (index + 1 < clusters.length) {
       const above = clusters[index + 1];
-      if (above.sellVol > 0
-        && cluster.buyVol >= above.sellVol * studyConfig.imbalance_threshold
-        && cluster.buyVol >= studyConfig.min_imbalance_volume) {
-        bullish[index] = true;
-        cluster.imbalance_buy = true;
+      if (above.buyVol > 0
+        && cluster.sellVol >= above.buyVol * studyConfig.imbalance_threshold
+        && cluster.sellVol >= studyConfig.min_imbalance_volume) {
+        bearish[index] = true;
+        cluster.imbalance_sell = true;
         summary.imbalanceCount += 1;
       }
     }

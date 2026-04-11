@@ -67,7 +67,7 @@ export function drawGrid(ctx, chartW, pMin, pMax, pStep, p2y) {
   }
 }
 
-export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible, modeFlags, symbol = "BTCUSDT") {
+export function drawPriceAxis(ctx, chartW, chartH, axisW, pMin, pMax, pStep, p2y, visible, modeFlags, symbol = "BTCUSD") {
   ctx.fillStyle = "#0c0f15";
   ctx.fillRect(chartW, 0, axisW, chartH);
   ctx.strokeStyle = "rgba(255,255,255,0.06)";

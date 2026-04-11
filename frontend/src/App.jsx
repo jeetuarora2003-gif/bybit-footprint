@@ -16,6 +16,7 @@ import {
   DEFAULT_FEATURES,
 } from "./components/chart/modeRules";
 import { normalizeTimeframe } from "./market/aggregate";
+import { configureFootprintFormatter } from "./utils/exoFormat";
 import "./App.css";
 
 const REPLAY_SPEEDS = [1, 2, 4, 8];
@@ -27,6 +28,13 @@ const REPLAY_BATCHES = {
   4: 50,
   8: 100,
 };
+const DEFAULT_INVERSE_SYMBOL = "BTCUSD";
+
+function normalizeStoredSymbol(value) {
+  const normalized = String(value || DEFAULT_INVERSE_SYMBOL).trim().toUpperCase();
+  if (!normalized) return DEFAULT_INVERSE_SYMBOL;
+  return normalized === "BTCUSDT" ? DEFAULT_INVERSE_SYMBOL : normalized;
+}
 
 export default function App() {
   const [settings, setSettings] = useState(loadPersistedSettings);
@@ -61,7 +69,11 @@ export default function App() {
   const updateSetting = (key, value) => {
     setSettings((prev) => ({
       ...prev,
-      [key]: key === "timeframe" ? normalizeTimeframe(value) : value,
+      [key]: key === "timeframe"
+        ? normalizeTimeframe(value)
+        : key === "symbol"
+          ? normalizeStoredSymbol(value)
+          : value,
     }));
   };
 
@@ -111,6 +123,12 @@ export default function App() {
     tickSize: settings.tickSize,
     symbol: settings.symbol,
   });
+
+  useEffect(() => {
+    configureFootprintFormatter({
+      quantityStep: instrument?.qtyStep || 1,
+    });
+  }, [instrument?.qtyStep]);
 
   const allCandles = useMemo(() => (liveCandle ? [...candles, liveCandle] : candles), [candles, liveCandle]);
   const resolvedSettings = useMemo(() => ({
@@ -352,6 +370,7 @@ function loadPersistedSettings() {
       ...DEFAULT_CHART_SETTINGS,
       ...(parsed && typeof parsed === "object" ? parsed : {}),
       timeframe: normalizeTimeframe(parsed?.timeframe || DEFAULT_CHART_SETTINGS.timeframe),
+      symbol: normalizeStoredSymbol(parsed?.symbol || DEFAULT_CHART_SETTINGS.symbol),
     };
   } catch {
     return DEFAULT_CHART_SETTINGS;

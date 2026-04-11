@@ -123,7 +123,7 @@ export default function Toolbar({
   };
 
   const editSymbol = () => {
-    const nextSymbol = window.prompt("Enter a Bybit linear symbol", settings.symbol || instrument?.symbol || "BTCUSDT");
+    const nextSymbol = window.prompt("Enter a Bybit inverse symbol", settings.symbol || instrument?.symbol || "BTCUSD");
     if (!nextSymbol) return;
     updateSetting("symbol", nextSymbol.trim().toUpperCase());
   };
@@ -136,7 +136,7 @@ export default function Toolbar({
         <div className="tb-sep" />
 
         <button type="button" className="tb-btn" onClick={editSymbol} title="Change symbol">
-          <span className="tb-exchange">Bybit:</span> {settings.symbol || instrument?.symbol || "BTCUSDT"}
+          <span className="tb-exchange">Bybit:</span> {settings.symbol || instrument?.symbol || "BTCUSD"}
         </button>
         <div className="tb-sep" />
 

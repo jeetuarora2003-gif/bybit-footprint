@@ -18,8 +18,8 @@ import {
 } from "../market/cache";
 import { DEFAULT_STUDY_CONFIG } from "../market/studyConfig";
 
-const LIVE_WS_URL = "wss://stream.bybit.com/v5/public/linear";
-const DEFAULT_SYMBOL = "BTCUSDT";
+const LIVE_WS_URL = "wss://stream.bybit.com/v5/public/inverse";
+const DEFAULT_SYMBOL = "BTCUSD";
 const DEFAULT_ROW_SIZE = 0.1;
 const MAX_HISTORY_BARS = 5000;
 const MAX_DEPTH_HISTORY = 4000;
