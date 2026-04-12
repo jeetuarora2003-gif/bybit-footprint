@@ -18,20 +18,18 @@ import {
 } from "../market/cache";
 import { DEFAULT_STUDY_CONFIG } from "../market/studyConfig";
 
-const LIVE_WS_URL = "wss://stream.bybit.com/v5/public/inverse";
 const DEFAULT_SYMBOL = "BTCUSD";
 const DEFAULT_ROW_SIZE = 0.1;
+const DEFAULT_PROXY_BASE = "http://localhost:8080";
 const MAX_HISTORY_BARS = 5000;
 const MAX_DEPTH_HISTORY = 4000;
 const MAX_REPLAY_TRADES = 80_000;
 const MAX_DEPTH_EVENTS = 30_000;
 const MAX_SEEN_TRADE_IDS = 200_000;
 const SEEN_TRADE_ID_TRIM_BATCH = 1024;
-const HEARTBEAT_MS = 20_000;
 const RECONNECT_MS = 2_000;
 const BROADCAST_MS = 250;
 const BOOK_LEVELS = 40;
-const ORDERBOOK_TOPIC_DEPTH = 200;
 const REPLAY_WINDOW_MS = 30 * 60_000;
 const REPLAY_MIN_EVENTS = 50;
 const TRADE_PERSIST_BATCH = 128;
@@ -78,7 +76,7 @@ self.onmessage = async (event) => {
 function createEngine() {
   const state = {
     symbol: DEFAULT_SYMBOL,
-    proxyBase: "http://localhost:8080",
+    proxyBase: DEFAULT_PROXY_BASE,
     instrument: {
       symbol: DEFAULT_SYMBOL,
       tickSize: DEFAULT_ROW_SIZE,
@@ -104,6 +102,7 @@ function createEngine() {
     tradePersistTimeoutId: null,
     depthEventPersistTimeoutId: null,
     currentCandle: null,
+    backendLiveBar: null,
     cvd: 0,
     currentOI: 0,
     prevBarOI: 0,
@@ -147,6 +146,7 @@ function createEngine() {
     state.pendingTradePersist = [];
     state.pendingDepthEventPersist = [];
     state.currentCandle = null;
+    state.backendLiveBar = null;
     state.cvd = 0;
     state.currentOI = 0;
     state.prevBarOI = 0;
@@ -177,6 +177,7 @@ function createEngine() {
       state.depthHistory = normalizeDepthSnapshots(cached.depth).slice(-MAX_DEPTH_HISTORY);
       state.tradeHistory = normalizeReplayTrades(cached.trades).slice(-MAX_REPLAY_TRADES);
       state.depthEvents = normalizeDepthEvents(cached.depthEvents).slice(-MAX_DEPTH_EVENTS);
+      seedSeenTradeIdsFromReplayHistory();
       seedRuntimeFromHistory();
       restoreRuntimeFromCache();
       recomputeAggregatedHistory();
@@ -195,9 +196,11 @@ function createEngine() {
     }
 
     void hydrateInstrument();
+    void hydrateHistoryFromProxy();
+    void hydrateTapeFromProxy();
+    void hydrateDepthHistoryFromProxy();
     connect();
     startBroadcastLoop();
-    void hydrateHistoryFromProxy();
   }
 
   function updateSettings(payload) {
@@ -249,8 +252,10 @@ function createEngine() {
 
   async function hydrateHistoryFromProxy() {
     try {
-      const hadLiveRuntime = Boolean(state.currentCandle?.hasTick);
-      const response = await fetch(`${state.proxyBase}/history?symbol=${encodeURIComponent(state.symbol)}&limit=${MAX_HISTORY_BARS}`);
+      const hadLiveRuntime = Boolean(state.currentCandle?.hasTick || state.backendLiveBar?.candle_open_time);
+      const response = await fetch(
+        `${state.proxyBase}/history?symbol=${encodeURIComponent(state.symbol)}&timeframe=1m&tickSize=1&limit=${MAX_HISTORY_BARS}`,
+      );
       if (!response.ok) {
         return;
       }
@@ -324,6 +329,69 @@ function createEngine() {
   function restoreRuntimeFromCache() {
     restoreBookFromCache();
     restoreLiveCandleFromTrades();
+  }
+
+  function seedSeenTradeIdsFromReplayHistory() {
+    for (const trade of state.tradeHistory) {
+      const tradeId = trade?.trade_id;
+      if (!tradeId || state.seenTradeSet.has(tradeId)) continue;
+      state.seenTradeSet.add(tradeId);
+      state.seenTradeIds.push(tradeId);
+    }
+
+    if (state.seenTradeIds.length > MAX_SEEN_TRADE_IDS) {
+      const overflow = state.seenTradeIds.length - MAX_SEEN_TRADE_IDS;
+      const removed = state.seenTradeIds.splice(0, overflow);
+      removed.forEach((id) => state.seenTradeSet.delete(id));
+    }
+  }
+
+  function ingestBackendRecentTrades(recentTrades, liveBar) {
+    if (!Array.isArray(recentTrades) || !recentTrades.length) return;
+
+    const normalized = [];
+    for (const trade of recentTrades) {
+      const tradeId = typeof trade?.id === "string" ? trade.id : "";
+      if (tradeId && state.seenTradeSet.has(tradeId)) {
+        continue;
+      }
+
+      const normalizedTrade = normalizeReplayTrade({
+        timestamp: trade?.timestamp,
+        price: trade?.price,
+        volume: trade?.volume,
+        side: trade?.side,
+        seq: trade?.seq,
+        trade_id: tradeId,
+        oi: liveBar?.oi,
+        best_bid: liveBar?.best_bid,
+        best_bid_size: liveBar?.best_bid_size,
+        best_ask: liveBar?.best_ask,
+        best_ask_size: liveBar?.best_ask_size,
+      });
+
+      if (!normalizedTrade?.event_id) continue;
+      normalized.push(normalizedTrade);
+
+      if (tradeId) {
+        state.seenTradeSet.add(tradeId);
+        state.seenTradeIds.push(tradeId);
+      }
+    }
+
+    if (!normalized.length) return;
+
+    if (state.seenTradeIds.length > MAX_SEEN_TRADE_IDS + SEEN_TRADE_ID_TRIM_BATCH) {
+      const removed = state.seenTradeIds.splice(0, SEEN_TRADE_ID_TRIM_BATCH);
+      removed.forEach((id) => state.seenTradeSet.delete(id));
+    }
+
+    state.tradeHistory = mergeReplayTrades(state.tradeHistory, normalized).slice(-MAX_REPLAY_TRADES);
+    state.lastTradeTimestamp = Math.max(
+      state.lastTradeTimestamp,
+      normalized.at(-1)?.timestamp || 0,
+    );
+    emitReplayState();
   }
 
   function restoreBookFromCache() {
@@ -518,25 +586,12 @@ function createEngine() {
     if (state.shuttingDown) return;
 
     setStatus("connecting");
-    const ws = new WebSocket(LIVE_WS_URL);
+    const ws = new WebSocket(buildBackendWebSocketUrl(state.proxyBase, state.symbol));
     state.ws = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({
-        op: "subscribe",
-        args: [
-          `publicTrade.${state.symbol}`,
-          `orderbook.${ORDERBOOK_TOPIC_DEPTH}.${state.symbol}`,
-          `tickers.${state.symbol}`,
-        ],
-      }));
-
       if (state.heartbeatId) clearInterval(state.heartbeatId);
-      state.heartbeatId = setInterval(() => {
-        if (state.ws?.readyState === WebSocket.OPEN) {
-          state.ws.send('{"op":"ping"}');
-        }
-      }, HEARTBEAT_MS);
+      state.heartbeatId = null;
 
       setStatus("connected");
     };
@@ -607,6 +662,16 @@ function createEngine() {
   }
 
   function handleSocketPayload(message) {
+    const eventType = typeof message?.type === "string" ? message.type : "";
+    if (eventType === "candle") {
+      handleBackendCandle(message.payload);
+      return;
+    }
+    if (eventType === "depth") {
+      handleBackendDepthEnvelope(message.payload);
+      return;
+    }
+
     const topic = typeof message?.topic === "string" ? message.topic : "";
     if (topic.startsWith("publicTrade.")) {
       handleTradeEnvelope(message);
@@ -619,6 +684,75 @@ function createEngine() {
     if (topic.startsWith("tickers.")) {
       handleTickerEnvelope(message);
     }
+  }
+
+  function handleBackendCandle(payload) {
+    const liveBar = {
+      ...normalizeStoredBar(payload),
+      recent_trades: Array.isArray(payload?.recent_trades) ? payload.recent_trades : [],
+    };
+    if (!liveBar?.candle_open_time) return;
+
+    const previousLiveOpen = state.backendLiveBar?.candle_open_time || 0;
+    if (previousLiveOpen && previousLiveOpen !== liveBar.candle_open_time) {
+      const lastClosedOpen = Number(state.completedBars.at(-1)?.candle_open_time) || 0;
+      if (previousLiveOpen > lastClosedOpen) {
+        state.completedBars.push(state.backendLiveBar);
+        if (state.completedBars.length > MAX_HISTORY_BARS) {
+          state.completedBars = state.completedBars.slice(-MAX_HISTORY_BARS);
+        }
+        recomputeAggregatedHistory();
+        void appendBar(state.backendLiveBar, MAX_HISTORY_BARS, state.symbol);
+      }
+    }
+
+    state.backendLiveBar = liveBar;
+    state.currentCandle = null;
+    state.cvd = Number(liveBar.cvd) || state.cvd;
+    state.currentOI = Number(liveBar.oi) || state.currentOI;
+    state.prevBarOI = round6(state.currentOI - (Number(liveBar.oi_delta) || 0));
+    state.bestBid = Number(liveBar.best_bid) || 0;
+    state.bestBidSize = Number(liveBar.best_bid_size) || 0;
+    state.bestAsk = Number(liveBar.best_ask) || 0;
+    state.bestAskSize = Number(liveBar.best_ask_size) || 0;
+    state.lastTickerTimestamp = Date.now();
+
+    if (Array.isArray(liveBar.bids)) {
+      state.bids = new Map();
+      for (const level of liveBar.bids) {
+        if (Number(level?.price) > 0 && Number(level?.size) > 0) {
+          state.bids.set(String(level.price), Number(level.size));
+        }
+      }
+    }
+
+    if (Array.isArray(liveBar.asks)) {
+      state.asks = new Map();
+      for (const level of liveBar.asks) {
+        if (Number(level?.price) > 0 && Number(level?.size) > 0) {
+          state.asks.set(String(level.price), Number(level.size));
+        }
+      }
+    }
+
+    ingestBackendRecentTrades(liveBar.recent_trades, liveBar);
+    emitCaptureStats();
+  }
+
+  function handleBackendDepthEnvelope(payload) {
+    const snapshot = copyDepthSnapshot(payload);
+    if (!snapshot?.timestamp) return;
+
+    state.bestBid = snapshot.best_bid || state.bestBid;
+    state.bestBidSize = snapshot.best_bid_size || state.bestBidSize;
+    state.bestAsk = snapshot.best_ask || state.bestAsk;
+    state.bestAskSize = snapshot.best_ask_size || state.bestAskSize;
+    state.lastDepthTimestamp = Math.max(state.lastDepthTimestamp, snapshot.timestamp);
+    state.bids = new Map();
+    state.asks = new Map();
+    applyDepthEventLevelsToMap(state.bids, snapshot.bids);
+    applyDepthEventLevelsToMap(state.asks, snapshot.asks);
+    emitCaptureStats();
   }
 
   function handleTradeEnvelope(message) {
@@ -634,6 +768,69 @@ function createEngine() {
         continue;
       }
       processTrade({ price, volume: contracts, side, timestamp, seq, tradeId });
+    }
+  }
+
+  async function hydrateTapeFromProxy() {
+    try {
+      const response = await fetch(`${state.proxyBase}/tape?symbol=${encodeURIComponent(state.symbol)}`);
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      if (!Array.isArray(payload)) {
+        return;
+      }
+
+      const normalized = normalizeReplayTrades(payload.map((item) => ({
+        timestamp: item?.timestamp,
+        price: item?.price,
+        volume: item?.volume,
+        side: item?.side,
+        seq: item?.seq,
+        trade_id: item?.id,
+      })));
+
+      if (!normalized.length) {
+        return;
+      }
+
+      state.tradeHistory = mergeReplayTrades(state.tradeHistory, normalized).slice(-MAX_REPLAY_TRADES);
+      seedSeenTradeIdsFromReplayHistory();
+      state.lastTradeTimestamp = Math.max(
+        state.lastTradeTimestamp,
+        normalized.at(-1)?.timestamp || 0,
+      );
+      emitCaptureStats();
+      emitReplayState();
+    } catch {
+      // Replay hydration is best effort.
+    }
+  }
+
+  async function hydrateDepthHistoryFromProxy() {
+    try {
+      const response = await fetch(`${state.proxyBase}/depth-history?symbol=${encodeURIComponent(state.symbol)}`);
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      if (!Array.isArray(payload)) {
+        return;
+      }
+
+      const normalized = normalizeDepthSnapshots(payload).slice(-MAX_DEPTH_HISTORY);
+      if (!normalized.length) {
+        return;
+      }
+
+      state.depthHistory = normalized;
+      const latestDepth = normalized.at(-1);
+      state.lastDepthTimestamp = Math.max(state.lastDepthTimestamp, latestDepth?.timestamp || 0);
+      emitCaptureStats();
+      emitFullSnapshot();
+    } catch {
+      // Depth hydration is best effort.
     }
   }
 
@@ -763,6 +960,27 @@ function createEngine() {
   }
 
   function buildAggregatedLiveCandle() {
+    if (state.backendLiveBar?.candle_open_time) {
+      const liveRaw = state.backendLiveBar;
+      const liveFrameOpen = frameOpenTime(liveRaw.candle_open_time, state.timeframe);
+      const trailingBars = [];
+      for (let index = state.completedBars.length - 1; index >= 0; index -= 1) {
+        const bar = state.completedBars[index];
+        if (frameOpenTime(bar.candle_open_time, state.timeframe) !== liveFrameOpen) {
+          break;
+        }
+        trailingBars.unshift(bar);
+      }
+
+      const aggregated = aggregateBars(
+        [...trailingBars, liveRaw],
+        state.timeframe,
+        state.tickMultiplier,
+        state.studyConfig,
+      );
+      return aggregated.at(-1) || null;
+    }
+
     if (!state.currentCandle?.hasTick) return null;
 
     const liveRaw = buildOneMinuteBar(state.currentCandle, state.currentOI - state.prevBarOI);
@@ -1380,7 +1598,7 @@ function createReplayState() {
 }
 
 function normalizeProxyBase(proxyBase) {
-  if (!proxyBase) return "http://localhost:8080";
+  if (!proxyBase) return DEFAULT_PROXY_BASE;
   return proxyBase.endsWith("/") ? proxyBase.slice(0, -1) : proxyBase;
 }
 
@@ -1401,6 +1619,18 @@ function normalizeInstrument(payload, fallbackSymbol) {
       ? payload.defaultTicks.map((item) => Number(item) || 1).filter((item) => item > 0)
       : [1, 5, 10, 25, 50, 100],
   };
+}
+
+function buildBackendWebSocketUrl(proxyBase, symbol) {
+  const url = new URL(normalizeProxyBase(proxyBase) || DEFAULT_PROXY_BASE);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/";
+  url.search = new URLSearchParams({
+    symbol: String(symbol || DEFAULT_SYMBOL).toUpperCase(),
+    timeframe: "1m",
+    tickSize: "1",
+  }).toString();
+  return url.toString();
 }
 
 function buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }) {
@@ -1531,6 +1761,25 @@ function normalizeReplayTrades(items) {
       if (timestampDelta !== 0) return timestampDelta;
       return a.seq - b.seq;
     });
+}
+
+function mergeReplayTrades(current, incoming) {
+  const merged = new Map();
+  for (const trade of current || []) {
+    if (trade?.event_id) {
+      merged.set(trade.event_id, trade);
+    }
+  }
+  for (const trade of incoming || []) {
+    if (trade?.event_id) {
+      merged.set(trade.event_id, trade);
+    }
+  }
+  return [...merged.values()].sort((a, b) => {
+    const timestampDelta = a.timestamp - b.timestamp;
+    if (timestampDelta !== 0) return timestampDelta;
+    return a.seq - b.seq;
+  });
 }
 
 function clampInt(value, minValue, maxValue) {
