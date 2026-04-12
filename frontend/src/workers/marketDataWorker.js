@@ -664,7 +664,7 @@ function createEngine() {
   function handleSocketPayload(message) {
     const eventType = typeof message?.type === "string" ? message.type : "";
     if (eventType === "candle") {
-      handleBackendCandle(message.payload);
+      handleBackendCandle(normalizeBackendCandlePayload(message));
       return;
     }
     if (eventType === "depth") {
@@ -1631,6 +1631,58 @@ function buildBackendWebSocketUrl(proxyBase, symbol) {
     tickSize: "1",
   }).toString();
   return url.toString();
+}
+
+function normalizeBackendCandlePayload(message) {
+  const payload = message?.payload && typeof message.payload === "object"
+    ? message.payload
+    : message;
+
+  return {
+    candle_open_time: Number(
+      payload?.candle_open_time
+      ?? payload?.open_time
+      ?? payload?.time
+      ?? 0,
+    ) || 0,
+    open: Number(payload?.open) || 0,
+    high: Number(payload?.high) || 0,
+    low: Number(payload?.low) || 0,
+    close: Number(payload?.close) || 0,
+    row_size: Number(payload?.row_size ?? payload?.rowSize) || DEFAULT_ROW_SIZE,
+    clusters: Array.isArray(payload?.clusters) ? payload.clusters : [],
+    candle_delta: Number(payload?.candle_delta ?? payload?.delta) || 0,
+    cvd: Number(payload?.cvd) || 0,
+    buy_trades: Number(payload?.buy_trades ?? payload?.buyTrades) || 0,
+    sell_trades: Number(payload?.sell_trades ?? payload?.sellTrades) || 0,
+    total_volume: Number(payload?.total_volume ?? payload?.totalVolume) || 0,
+    buy_volume: Number(payload?.buy_volume ?? payload?.buyVolume) || 0,
+    sell_volume: Number(payload?.sell_volume ?? payload?.sellVolume) || 0,
+    oi: Number(payload?.oi) || 0,
+    oi_delta: Number(payload?.oi_delta ?? payload?.oiDelta) || 0,
+    best_bid: Number(payload?.best_bid ?? payload?.bestBid) || 0,
+    best_bid_size: Number(payload?.best_bid_size ?? payload?.bestBidSize) || 0,
+    best_ask: Number(payload?.best_ask ?? payload?.bestAsk) || 0,
+    best_ask_size: Number(payload?.best_ask_size ?? payload?.bestAskSize) || 0,
+    bids: Array.isArray(payload?.bids) ? payload.bids : [],
+    asks: Array.isArray(payload?.asks) ? payload.asks : [],
+    unfinished_low: Boolean(payload?.unfinished_low ?? payload?.unfinishedLow),
+    unfinished_high: Boolean(payload?.unfinished_high ?? payload?.unfinishedHigh),
+    absorption_low: Boolean(payload?.absorption_low ?? payload?.absorptionLow),
+    absorption_high: Boolean(payload?.absorption_high ?? payload?.absorptionHigh),
+    exhaustion_low: Boolean(payload?.exhaustion_low ?? payload?.exhaustionLow),
+    exhaustion_high: Boolean(payload?.exhaustion_high ?? payload?.exhaustionHigh),
+    sweep_buy: Boolean(payload?.sweep_buy ?? payload?.sweepBuy),
+    sweep_sell: Boolean(payload?.sweep_sell ?? payload?.sweepSell),
+    delta_divergence_bull: Boolean(payload?.delta_divergence_bull ?? payload?.deltaDivergenceBull),
+    delta_divergence_bear: Boolean(payload?.delta_divergence_bear ?? payload?.deltaDivergenceBear),
+    alerts: Array.isArray(payload?.alerts) ? payload.alerts : [],
+    orderflow_coverage: Number(payload?.orderflow_coverage ?? payload?.orderflowCoverage) || 0,
+    data_source: String(payload?.data_source ?? payload?.dataSource ?? ""),
+    recent_trades: Array.isArray(payload?.recent_trades ?? payload?.recentTrades)
+      ? (payload.recent_trades ?? payload.recentTrades)
+      : [],
+  };
 }
 
 function buildReplayEventId({ timestamp, seq, tradeId, side, price, volume }) {
