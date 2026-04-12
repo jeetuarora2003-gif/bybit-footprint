@@ -1,8 +1,33 @@
 import "./OrderflowReading.css";
 import { buildOrderflowReading } from "../utils/orderflow";
 
-export default function OrderflowReading({ candle, context }) {
+export default function OrderflowReading({
+  candle,
+  context,
+  collapsed = false,
+  onToggleCollapsed,
+}) {
   const reading = buildOrderflowReading(candle, context);
+
+  if (collapsed) {
+    return (
+      <div className={`orderflow-reading orderflow-reading--collapsed orderflow-reading--${reading.tone}`}>
+        <div className="orderflow-reading__collapsed-summary">
+          <span className="orderflow-reading__kicker">Orderflow Data</span>
+          <span className="orderflow-reading__collapsed-text">
+            Hidden to keep the chart area clear.
+          </span>
+        </div>
+        <button
+          type="button"
+          className="orderflow-reading__toggle"
+          onClick={onToggleCollapsed}
+        >
+          Show
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className={`orderflow-reading orderflow-reading--${reading.tone}`}>
@@ -19,6 +44,13 @@ export default function OrderflowReading({ candle, context }) {
               {reading.gradeLabel}
             </span>
           )}
+          <button
+            type="button"
+            className="orderflow-reading__toggle"
+            onClick={onToggleCollapsed}
+          >
+            Hide
+          </button>
         </div>
         <div className="orderflow-reading__headline">{reading.headline}</div>
         <div className="orderflow-reading__detail">{reading.detail}</div>

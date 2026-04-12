@@ -22,6 +22,7 @@ import "./App.css";
 const REPLAY_SPEEDS = [1, 2, 4, 8];
 const SETTINGS_STORAGE_KEY = "bybit-footprint:settings:v1";
 const FEATURES_STORAGE_KEY = "bybit-footprint:features:v1";
+const ORDERFLOW_STRIP_VISIBLE_STORAGE_KEY = "bybit-footprint:orderflow-strip-visible:v1";
 const REPLAY_BATCHES = {
   1: 10,
   2: 25,
@@ -40,6 +41,7 @@ export default function App() {
   const [settings, setSettings] = useState(loadPersistedSettings);
   const [crosshairData, setCrosshairData] = useState(null);
   const [activeFeatureArr, setActiveFeatureArr] = useState(loadPersistedFeatures);
+  const [orderflowStripVisible, setOrderflowStripVisible] = useState(loadOrderflowStripVisible);
   const [viewCommand, setViewCommand] = useState({ type: "reset", nonce: 1 });
   const [replayUi, setReplayUi] = useState({
     playing: false,
@@ -65,6 +67,18 @@ export default function App() {
       // Workspace persistence is best effort only.
     }
   }, [activeFeatureArr]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        ORDERFLOW_STRIP_VISIBLE_STORAGE_KEY,
+        JSON.stringify(orderflowStripVisible),
+      );
+    } catch {
+      // Workspace persistence is best effort only.
+    }
+  }, [orderflowStripVisible]);
 
   const updateSetting = (key, value) => {
     setSettings((prev) => ({
@@ -238,7 +252,12 @@ export default function App() {
         captureStats={captureStats}
         status={status}
       />
-      <OrderflowReading candle={infoCandle} context={readingContext} />
+      <OrderflowReading
+        candle={infoCandle}
+        context={readingContext}
+        collapsed={!orderflowStripVisible}
+        onToggleCollapsed={() => setOrderflowStripVisible((current) => !current)}
+      />
       <div className="app-body">
         <Sidebar
           settings={resolvedSettings}
@@ -403,5 +422,17 @@ function loadPersistedFeatures() {
       : DEFAULT_FEATURES;
   } catch {
     return DEFAULT_FEATURES;
+  }
+}
+
+function loadOrderflowStripVisible() {
+  if (typeof window === "undefined") return true;
+
+  try {
+    const raw = window.localStorage.getItem(ORDERFLOW_STRIP_VISIBLE_STORAGE_KEY);
+    if (raw == null) return true;
+    return JSON.parse(raw) !== false;
+  } catch {
+    return true;
   }
 }
