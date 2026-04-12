@@ -113,20 +113,16 @@ func fetchBybitRecentTrades(client *http.Client, symbol string, limit int) ([]Ta
 	trades := make([]TapeTrade, 0, len(result.List))
 	for _, item := range result.List {
 		price, _ := strconv.ParseFloat(item.Price, 64)
-		contracts, _ := strconv.ParseFloat(item.Size, 64)
+		size, _ := strconv.ParseFloat(item.Size, 64)
 		ts, _ := strconv.ParseInt(item.Time, 10, 64)
 		seq, _ := strconv.ParseInt(item.Seq, 10, 64)
-		if price == 0 || contracts == 0 || ts == 0 {
-			continue
-		}
-		btcVol := contracts / price
-		if btcVol == 0 {
+		if price == 0 || size == 0 || ts == 0 {
 			continue
 		}
 		trades = append(trades, TapeTrade{
 			ID:        item.ExecID,
 			Price:     round6(price),
-			Volume:    round8(btcVol),
+			Volume:    round6(size),
 			Side:      item.Side,
 			Timestamp: ts,
 			Seq:       seq,
@@ -195,8 +191,8 @@ func fetchBybitKlineRange(client *http.Client, symbol string, startTs, endTs int
 			high, errHigh := strconv.ParseFloat(item[2], 64)
 			low, errLow := strconv.ParseFloat(item[3], 64)
 			closePrice, errClose := strconv.ParseFloat(item[4], 64)
-			turnover, errTurnover := strconv.ParseFloat(item[6], 64)
-			if errTs != nil || errOpen != nil || errHigh != nil || errLow != nil || errClose != nil || errTurnover != nil {
+			volume, errVolume := strconv.ParseFloat(item[5], 64)
+			if errTs != nil || errOpen != nil || errHigh != nil || errLow != nil || errClose != nil || errVolume != nil {
 				continue
 			}
 			if openTime < startTs || openTime > endTs {
@@ -209,9 +205,7 @@ func fetchBybitKlineRange(client *http.Client, symbol string, startTs, endTs int
 				High:     round6(high),
 				Low:      round6(low),
 				Close:    round6(closePrice),
-				// For inverse BTCUSD, Bybit kline turnover is base-coin BTC volume.
-				// Using it keeps backfill candle volume in the same unit as synthetic live trade volume.
-				Volume: round8(turnover),
+				Volume:   round6(volume),
 			}
 			if oldestTs == 0 || openTime < oldestTs {
 				oldestTs = openTime

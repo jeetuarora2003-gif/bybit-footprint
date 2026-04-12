@@ -175,7 +175,7 @@ const (
 	bybitSymbol             = "BTCUSD"
 	bybitCategory           = "inverse"
 	bybitWSURL              = "wss://stream.bybit.com/v5/public/inverse"
-	rootFeedIdentity        = "bybit:inverse:BTCUSD:synthetic-btc-v1"
+	rootFeedIdentity        = "bybit:inverse:BTCUSD:raw-contracts-v1"
 	rowSize                 = 0.10
 	maxHistory              = 20000
 	maxSeenTradeIDs         = 200000
@@ -962,15 +962,11 @@ func main() {
 			}
 			for _, bt := range env.Data {
 				price, _ := strconv.ParseFloat(bt.P, 64)
-				contracts, _ := strconv.ParseFloat(bt.V, 64)
-				if price == 0 || contracts == 0 {
+				vol, _ := strconv.ParseFloat(bt.V, 64)
+				if price == 0 || vol == 0 {
 					continue
 				}
-				btcVol := contracts / price
-				if btcVol == 0 {
-					continue
-				}
-				processTrade(price, btcVol, bt.S, bt.T, bt.Seq, bt.ID)
+				processTrade(price, vol, bt.S, bt.T, bt.Seq, bt.ID)
 			}
 		}
 	}()
@@ -1275,7 +1271,7 @@ func main() {
 	})
 
 	fmt.Println("▶  Footprint WS server on :8080")
-	fmt.Printf("   Streams: publicTrade + orderbook.50 + tickers (%s %s synthetic BTC)\n", bybitSymbol, bybitCategory)
+	fmt.Println("   Streams: publicTrade + orderbook.50 + tickers (BTCUSD inverse)")
 	fmt.Println("   History endpoint: GET /history")
 	fmt.Println("   Depth history endpoint: GET /depth-history")
 	log.Fatal(http.ListenAndServe(":8080", nil))
