@@ -78,7 +78,7 @@ self.onmessage = async (event) => {
 function createEngine() {
   const state = {
     symbol: DEFAULT_SYMBOL,
-    proxyBase: "/api",
+    proxyBase: "http://localhost:8080",
     instrument: {
       symbol: DEFAULT_SYMBOL,
       tickSize: DEFAULT_ROW_SIZE,
@@ -1380,7 +1380,7 @@ function createReplayState() {
 }
 
 function normalizeProxyBase(proxyBase) {
-  if (!proxyBase) return "/api";
+  if (!proxyBase) return "http://localhost:8080";
   return proxyBase.endsWith("/") ? proxyBase.slice(0, -1) : proxyBase;
 }
 

@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -167,6 +168,21 @@ type BroadcastMsg struct {
 	DataSource          string      `json:"data_source,omitempty"`
 }
 
+type instrumentResponse struct {
+	Symbol           string  `json:"symbol"`
+	BaseCoin         string  `json:"baseCoin"`
+	QuoteCoin        string  `json:"quoteCoin"`
+	TickSize         float64 `json:"tickSize"`
+	QtyStep          float64 `json:"qtyStep"`
+	MinOrderQty      float64 `json:"minOrderQty"`
+	MaxOrderQty      float64 `json:"maxOrderQty"`
+	MinNotionalValue float64 `json:"minNotionalValue"`
+	PriceScale       int     `json:"priceScale"`
+	VolumeUnit       string  `json:"volumeUnit"`
+	SyntheticBTC     bool    `json:"syntheticBtc"`
+	DefaultTicks     []int   `json:"defaultTicks"`
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Candle aggregator
 // ════════════════════════════════════════════════════════════════════
@@ -177,12 +193,19 @@ const (
 	bybitWSURL              = "wss://stream.bybit.com/v5/public/inverse"
 	rootFeedIdentity        = "bybit:inverse:BTCUSD:raw-contracts-v1"
 	rowSize                 = 0.10
-	maxHistory              = 20000
+	maxHistory              = 1000
 	maxSeenTradeIDs         = 200000
 	seenTradeIDTrimBatch    = 1024
-	maxRecentTrades         = 5000
-	maxRecentDepthSnapshots = 24000
+	maxRecentTrades         = 1000
+	maxRecentDepthSnapshots = 1000
+	defaultHTTPPort         = "8080"
+	bybitReconnectDelay     = 5 * time.Second
 )
+
+var allowedFrontendOrigins = map[string]struct{}{
+	"http://localhost:5173": {},
+	"http://127.0.0.1:5173": {},
+}
 
 type bucketAccum struct {
 	buyVol       float64
@@ -514,6 +537,44 @@ func round8(v float64) float64 {
 	return math.Round(v*1e8) / 1e8
 }
 
+func httpPort() string {
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		return defaultHTTPPort
+	}
+	return port
+}
+
+func isAllowedFrontendOrigin(origin string) bool {
+	_, ok := allowedFrontendOrigins[origin]
+	return ok
+}
+
+func applyAPIHeaders(w http.ResponseWriter, r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin != "" && isAllowedFrontendOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
+	return false
+}
+
+func writeJSON(w http.ResponseWriter, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "marshal error", http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(data)
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Orderbook state
 // ════════════════════════════════════════════════════════════════════
@@ -741,25 +802,6 @@ func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []Broa
 		return err
 	}
 	return conn.WriteMessage(websocket.TextMessage, payload)
-}
-
-// ════════════════════════════════════════════════════════════════════
-//  Exponential backoff
-// ════════════════════════════════════════════════════════════════════
-
-const (
-	maxRetries    = 5
-	baseBackoff   = 1 * time.Second
-	maxBackoff    = 30 * time.Second
-	backoffFactor = 2.0
-)
-
-func backoffDuration(attempt int) time.Duration {
-	d := time.Duration(float64(baseBackoff) * math.Pow(backoffFactor, float64(attempt)))
-	if d > maxBackoff {
-		d = maxBackoff
-	}
-	return d
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1000,24 +1042,13 @@ func main() {
 		}
 	}()
 
-	// ── Bybit reader with exponential backoff ──
+	// ── Bybit reader with fixed reconnect delay ──
 	go func() {
-		attempt := 0
 		for {
-			err := connectBybit(tradeCh, miscCh)
-			if err != nil {
-				attempt++
-				wait := backoffDuration(attempt - 1)
-				if attempt > maxRetries {
-					log.Printf("[bybit] max retries (%d) exceeded — resetting", maxRetries)
-					attempt = 0
-					wait = baseBackoff
-				}
-				log.Printf("[bybit] error: %v — retry %d in %v", err, attempt, wait)
-				time.Sleep(wait)
-			} else {
-				attempt = 0
+			if err := connectBybit(tradeCh, miscCh); err != nil {
+				log.Printf("[bybit] error: %v — retrying in %v", err, bybitReconnectDelay)
 			}
+			time.Sleep(bybitReconnectDelay)
 		}
 	}()
 
@@ -1102,16 +1133,34 @@ func main() {
 	}()
 
 	// ── HTTP routes ──
+	listenAddr := "0.0.0.0:" + httpPort()
+	instrumentPayload := instrumentResponse{
+		Symbol:           bybitSymbol,
+		BaseCoin:         "BTC",
+		QuoteCoin:        "USD",
+		TickSize:         rowSize,
+		QtyStep:          1,
+		MinOrderQty:      1,
+		MaxOrderQty:      0,
+		MinNotionalValue: 0,
+		PriceScale:       1,
+		VolumeUnit:       "USD",
+		SyntheticBTC:     false,
+		DefaultTicks:     []int{1, 5, 10, 25, 50, 100},
+	}
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			return origin == "" || isAllowedFrontendOrigin(origin)
+		},
 	}
 	parseHistoryLimit := func(raw string) int {
 		if raw == "" {
-			return 5000
+			return maxHistory
 		}
 		value, err := strconv.Atoi(raw)
 		if err != nil || value <= 0 {
-			return 5000
+			return maxHistory
 		}
 		if value > maxHistory {
 			return maxHistory
@@ -1119,10 +1168,27 @@ func main() {
 		return value
 	}
 
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if applyAPIHeaders(w, r) {
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("/instrument", func(w http.ResponseWriter, r *http.Request) {
+		if applyAPIHeaders(w, r) {
+			return
+		}
+		writeJSON(w, instrumentPayload)
+	})
+
 	// FIX #1: /history returns completed bars with full clusters for frontend preload
-	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Content-Type", "application/json")
+	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		if applyAPIHeaders(w, r) {
+			return
+		}
 		timeframe := normalizeTimeframe(r.URL.Query().Get("timeframe"))
 		tickMultiplier := parseTickMultiplier(r.URL.Query().Get("tickSize"))
 		limit := parseHistoryLimit(r.URL.Query().Get("limit"))
@@ -1133,44 +1199,27 @@ func main() {
 		if len(aggregated) > limit {
 			aggregated = aggregated[len(aggregated)-limit:]
 		}
-		data, err := json.Marshal(aggregated)
-		if err != nil {
-			http.Error(w, "marshal error", 500)
-			return
-		}
-		w.Write(data)
+		writeJSON(w, aggregated)
 	})
 
-	http.HandleFunc("/tape", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Content-Type", "application/json")
+	mux.HandleFunc("/tape", func(w http.ResponseWriter, r *http.Request) {
+		if applyAPIHeaders(w, r) {
+			return
+		}
 		mu.Lock()
-		data, err := json.Marshal(copyTapeTrades(recentTrades))
+		payload := copyTapeTrades(recentTrades)
 		mu.Unlock()
-		if err != nil {
-			http.Error(w, "marshal error", 500)
-			return
-		}
-		w.Write(data)
+		writeJSON(w, payload)
 	})
 
-	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		if applyAPIHeaders(w, r) {
 			return
 		}
 
 		switch r.Method {
 		case http.MethodGet:
-			data, err := json.Marshal(currentStudyConfig())
-			if err != nil {
-				http.Error(w, "marshal error", 500)
-				return
-			}
-			w.Write(data)
+			writeJSON(w, currentStudyConfig())
 		case http.MethodPost:
 			var next StudyConfig
 			if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
@@ -1181,32 +1230,24 @@ func main() {
 				http.Error(w, "config update failed", 500)
 				return
 			}
-			data, err := json.Marshal(configStore.Get())
-			if err != nil {
-				http.Error(w, "marshal error", 500)
-				return
-			}
-			w.Write(data)
+			writeJSON(w, configStore.Get())
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	http.HandleFunc("/depth-history", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Content-Type", "application/json")
-		mu.Lock()
-		data, err := json.Marshal(copyDepthSnapshots(recentDepth))
-		mu.Unlock()
-		if err != nil {
-			http.Error(w, "marshal error", 500)
+	mux.HandleFunc("/depth-history", func(w http.ResponseWriter, r *http.Request) {
+		if applyAPIHeaders(w, r) {
 			return
 		}
-		w.Write(data)
+		mu.Lock()
+		payload := copyDepthSnapshots(recentDepth)
+		mu.Unlock()
+		writeJSON(w, payload)
 	})
 
 	// ── Local WS server on :8080 ──
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -1270,11 +1311,13 @@ func main() {
 		}()
 	})
 
-	fmt.Println("▶  Footprint WS server on :8080")
+	fmt.Printf("▶ Footprint server on %s\n", listenAddr)
 	fmt.Println("   Streams: publicTrade + orderbook.50 + tickers (BTCUSD inverse)")
+	fmt.Println("   Health endpoint: GET /health")
 	fmt.Println("   History endpoint: GET /history")
 	fmt.Println("   Depth history endpoint: GET /depth-history")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	server := &http.Server{Addr: listenAddr, Handler: mux}
+	log.Fatal(server.ListenAndServe())
 }
 
 // ════════════════════════════════════════════════════════════════════

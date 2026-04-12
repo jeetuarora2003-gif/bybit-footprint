@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resolveApiBase } from "../utils/apiBase";
 
 const DEFAULT_SYMBOL = "BTCUSD";
 
@@ -9,11 +10,7 @@ function normalizeInverseSymbol(symbol) {
 }
 
 function resolveProxyBase() {
-  const configured = import.meta.env.VITE_PROXY_BASE_URL;
-  if (configured) {
-    return configured.endsWith("/") ? configured.slice(0, -1) : configured;
-  }
-  return "/api";
+  return resolveApiBase();
 }
 
 function normalizeBookLevels(levels) {

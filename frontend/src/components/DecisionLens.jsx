@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./DecisionLens.css";
 import { buildDecisionLens } from "../utils/decisionLens";
+import { buildApiUrl } from "../utils/apiBase";
 import {
   formatSignalWithoutAI,
   interpretStructuredSignal,
@@ -46,7 +47,7 @@ export default function DecisionLens({
     const currentKey = decisionKey;
     const timeoutId = window.setTimeout(() => {
       interpretStructuredSignal(decision.formatterInput, {
-        endpointUrl: "/api/interpret",
+        endpointUrl: buildApiUrl("/interpret"),
         threshold: decision.formatterThreshold,
         timeoutMs: 900,
       }).then((nextMessage) => {
