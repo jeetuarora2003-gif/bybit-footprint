@@ -793,7 +793,7 @@ func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, 
 			high, err2 := strconv.ParseFloat(item[2], 64)
 			low, err3 := strconv.ParseFloat(item[3], 64)
 			closeValue, err4 := strconv.ParseFloat(item[4], 64)
-			turnover, err5 := strconv.ParseFloat(item[6], 64)
+			volume, err5 := strconv.ParseFloat(item[5], 64)
 			if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
 				continue
 			}
@@ -810,8 +810,8 @@ func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, 
 				CVD:            0,
 				BuyTrades:      0,
 				SellTrades:     0,
-				// For inverse BTCUSD, Bybit kline turnover is base-coin BTC volume.
-				TotalVolume:       round8(turnover),
+				// For inverse BTCUSD, Bybit kline volume is the raw contract count.
+				TotalVolume:       round6(volume),
 				BuyVolume:         0,
 				SellVolume:        0,
 				OI:                0,
@@ -949,8 +949,8 @@ func fetchInstrumentInfo(ctx context.Context, client *http.Client, symbol string
 		MinNotional:  parseFloatOrDefault(item.LotSizeFilter.MinNotional, 0),
 		PriceScale:   priceScale,
 		DefaultTicks: defaultTickMultipliers(tickSize),
-		VolumeUnit:   strings.ToUpper(strings.TrimSpace(item.BaseCoin)),
-		SyntheticBTC: true,
+		VolumeUnit:   strings.ToUpper(strings.TrimSpace(item.QuoteCoin)),
+		SyntheticBTC: false,
 	}, nil
 }
 

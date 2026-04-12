@@ -1,38 +1,31 @@
-# Bybit Footprint Chart
+# Bybit Footprint Engine
 
-Online-first BTCUSDT footprint chart with a browser-side market-data engine.
+BTCUSD inverse footprint workstation for Bybit, with a browser-rendered chart and a local desktop launcher.
 
 ## Current Architecture
 
 - `frontend/`
   - React + Vite UI
-  - Browser `Web Worker` connects directly to Bybit public WebSocket
-  - 1-minute trade aggregation, footprint clusters, DOM snapshots, and replay cache happen in the browser
-  - IndexedDB keeps a bounded local cache instead of growing forever
-- `cloudflare/`
-  - Tiny Cloudflare Worker proxy for REST backfill only
-  - Used for kline and open-interest history because Bybit REST is not browser-friendly for direct CORS usage
+  - Browser `Web Worker` connects to Bybit inverse public streams
+  - Aggregates footprint bars, CVD, DOM snapshots, replay cache, and derived studies locally
+- `backend/cmd/desktop/`
+  - Small local desktop server used by the double-click app
+  - Serves the built frontend plus `/api/history`, `/api/instrument`, and `/api/interpret`
 - `backend/`
-  - Existing Go backend kept in the repo as the older local-server path
-  - The frontend no longer depends on it for the online deployment path
+  - Root Go backend path kept for the standalone backend/server workflow
+- `cloudflare/`
+  - Lightweight REST proxy path for the online-first deployment flow
 
-## Why This Setup
+## Data Source
 
-- Lowest latency for live data: browser connects straight to Bybit
-- No always-on server in the live path
-- Free hosting is realistic because the server only handles light history requests
-- Local storage stays bounded because only a fixed recent cache is retained
+- Symbol: `BTCUSD`
+- Category: `inverse`
+- Live streams:
+  - `publicTrade.BTCUSD`
+  - `orderbook.200.BTCUSD`
+  - `tickers.BTCUSD`
 
-## Data Flow
-
-1. Browser worker subscribes to:
-   - `publicTrade.BTCUSDT`
-   - `orderbook.50.BTCUSDT`
-   - `tickers.BTCUSDT`
-2. Trades are aggregated into 1-minute footprint bars in the browser.
-3. Orderbook snapshots are sampled into a rolling depth-history cache.
-4. The main thread receives pre-aggregated chart updates every 500 ms.
-5. Historical backfill comes from the Cloudflare Worker at `/history`.
+The desktop and root backend paths are aligned to BTCUSD inverse. Current footprint volume is exchange-native inverse contract volume so cluster sizes match Exocharts-style BTCUSD displays more closely.
 
 ## Local Development
 
@@ -44,11 +37,18 @@ npm install
 npm run dev
 ```
 
-The app can run without the proxy, but historical backfill will be missing until a proxy URL is configured.
+### Root Go backend
 
-### Desktop App
+```bash
+cd backend
+go test ./...
+go build -o footprint .
+./footprint
+```
 
-If you want a real double-click launcher instead of terminals:
+## Desktop App
+
+To rebuild the desktop launcher:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File .\build-desktop.ps1
@@ -60,89 +60,27 @@ That generates:
 desktop-app/Bybit Footprint.exe
 ```
 
-The build also drops a shortcut on your Windows desktop:
+And refreshes the desktop shortcut:
 
 ```text
 Desktop/Bybit Footprint.lnk
 ```
 
-Double-click either the `.exe` or the desktop shortcut and it will:
-
-- start a small local server
-- open your browser automatically
-- serve the app and `/api/history` locally
-
-### Cloudflare Worker
-
-```bash
-cd cloudflare
-wrangler dev
-```
-
-If you run the worker locally, point the frontend at it:
-
-```bash
-cd frontend
-copy .env.example .env.local
-```
-
-Set:
-
-```bash
-VITE_PROXY_BASE_URL=http://127.0.0.1:8787
-```
-
-## Deploy
-
-### 1. Deploy the REST proxy
-
-```bash
-cd cloudflare
-wrangler deploy
-```
-
-This creates a worker URL like:
-
-```text
-https://your-worker-name.your-subdomain.workers.dev
-```
-
-### 2. Deploy the frontend
-
-Use Cloudflare Pages for `frontend/`.
-
-Build settings:
-
-- Build command: `npm run build`
-- Output directory: `dist`
-
-Set the Pages environment variable:
-
-```text
-VITE_PROXY_BASE_URL=https://your-worker-name.your-subdomain.workers.dev
-```
-
-## Storage Model
-
-The browser keeps a rolling local cache using IndexedDB:
-
-- completed footprint bars
-- depth-history snapshots
-
-Old data is pruned automatically as new data arrives, so storage is bounded instead of growing without limit.
-
 ## Verification
 
-Frontend checks:
-
 ```bash
 cd frontend
-npm run build
 npm run lint
+npm run build
+```
+
+```bash
+cd backend
+go test ./...
 ```
 
 ## Notes
 
-- The current online path is optimized for one user and one symbol: `BTCUSDT`.
-- Historical bars from the proxy are OHLCV + open-interest backfill, not full historical raw-trade replay.
-- Live footprint, orderflow, and DOM updates come from the direct Bybit WebSocket path in the browser worker.
+- Historical backfill comes from Bybit REST and is used mainly for price/history continuity.
+- Live footprint, delta, CVD, and DOM behavior come from captured trade and book streams.
+- IndexedDB is used as a bounded local cache in the browser/desktop UI path.

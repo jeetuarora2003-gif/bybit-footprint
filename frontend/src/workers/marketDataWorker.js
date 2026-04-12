@@ -633,9 +633,7 @@ function createEngine() {
       if (!Number.isFinite(price) || !Number.isFinite(contracts) || price <= 0 || contracts <= 0 || !timestamp) {
         continue;
       }
-      const volume = contracts / price;
-      if (!Number.isFinite(volume) || volume <= 0) continue;
-      processTrade({ price, volume, side, timestamp, seq, tradeId });
+      processTrade({ price, volume: contracts, side, timestamp, seq, tradeId });
     }
   }
 

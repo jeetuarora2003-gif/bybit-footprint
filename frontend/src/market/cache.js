@@ -1,5 +1,5 @@
 const DB_NAME = "exo-footprint-cache";
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const BARS_STORE = "bars";
 const DEPTH_STORE = "depth";
 const TRADES_STORE = "trades";
