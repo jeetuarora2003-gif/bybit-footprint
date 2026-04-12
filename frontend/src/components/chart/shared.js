@@ -1,4 +1,5 @@
 import { formatFootprintValue as formatFootprintCell } from "../../utils/exoFormat";
+import { frameOpenTime, timeframeDurationMs } from "../../market/aggregate";
 
 export const BG = "#0e1117";
 export const GRID_COLOR = "rgba(255,255,255,0.04)";
@@ -27,29 +28,18 @@ export const PROFILE_MAX_W = 80;
 export const DOM_MAX_W = 156;
 export const DOM_PRICE_COL_W = 46;
 export const DOM_SIDE_W = (DOM_MAX_W - DOM_PRICE_COL_W) / 2;
-export const CHART_TF_MS = {
-  "1m": 60000,
-  "2m": 120000,
-  "3m": 180000,
-  "5m": 300000,
-  "10m": 600000,
-  "15m": 900000,
-  "30m": 1800000,
-};
-
 export function getRowSize(settings) {
   const multiplier = Number.parseFloat(settings?.tickSize);
   const baseSize = Number(settings?.baseRowSize) || BASE_TICK_SIZE;
   return baseSize * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
 }
 
-export function frameDurationMs(timeframe) {
-  return CHART_TF_MS[timeframe] ?? CHART_TF_MS["1m"];
+export function frameDurationMs(timeframe, timestamp) {
+  return timeframeDurationMs(timeframe, timestamp);
 }
 
 export function frameOpenTimeForTimeframe(timestamp, timeframe) {
-  const tfMs = frameDurationMs(timeframe, timestamp);
-  return timestamp - (timestamp % tfMs);
+  return frameOpenTime(timestamp, timeframe);
 }
 
 export function clamp(value, min, max) {
@@ -87,7 +77,7 @@ export function getClusterFontSize(rowH, candleW, text, dataView) {
 export function recommendedCandleWidth(settings, modeFlags) {
   const timeframe = settings?.timeframe ?? "1m";
   const tickMultiplier = Math.max(1, Number.parseFloat(settings?.tickSize) || 1);
-  const tfMs = CHART_TF_MS[timeframe] ?? CHART_TF_MS["1m"];
+  const tfMs = frameDurationMs(timeframe);
   const tfMinutes = tfMs / 60000;
   const timeWeight = Math.log10(tfMinutes + 1);
   const tickPenalty = Math.log10(tickMultiplier + 1) * 4.5;

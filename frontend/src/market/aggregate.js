@@ -2,9 +2,31 @@ import { DEFAULT_STUDY_CONFIG } from "./studyConfig";
 
 const BASE_ROW_SIZE = 0.1;
 
-const SUPPORTED_TIMEFRAMES = new Set([
-  "1m", "2m", "3m", "5m", "10m", "15m", "30m",
-]);
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+
+const TIMEFRAME_DEFINITIONS = {
+  "1m": { type: "fixed", ms: 1 * MINUTE },
+  "2m": { type: "fixed", ms: 2 * MINUTE },
+  "3m": { type: "fixed", ms: 3 * MINUTE },
+  "5m": { type: "fixed", ms: 5 * MINUTE },
+  "10m": { type: "fixed", ms: 10 * MINUTE },
+  "15m": { type: "fixed", ms: 15 * MINUTE },
+  "30m": { type: "fixed", ms: 30 * MINUTE },
+  "1h": { type: "fixed", ms: 1 * HOUR },
+  "2h": { type: "fixed", ms: 2 * HOUR },
+  "4h": { type: "fixed", ms: 4 * HOUR },
+  "6h": { type: "fixed", ms: 6 * HOUR },
+  "8h": { type: "fixed", ms: 8 * HOUR },
+  "12h": { type: "fixed", ms: 12 * HOUR },
+  D: { type: "day" },
+  W: { type: "week" },
+  M: { type: "month" },
+};
+
+const SUPPORTED_TIMEFRAMES = new Set(Object.keys(TIMEFRAME_DEFINITIONS));
 
 export function round6(value) {
   return Math.round((Number(value) || 0) * 1e6) / 1e6;
@@ -23,31 +45,69 @@ export function aggregatedRowSize(tickMultiplier, baseRowSize = BASE_ROW_SIZE) {
   return round6((Number(baseRowSize) || BASE_ROW_SIZE) * parseTickMultiplier(tickMultiplier));
 }
 
-export function timeframeDurationMs(timeframe) {
-  switch (timeframe) {
-    case "1m":
-      return 60_000;
-    case "2m":
-      return 120_000;
-    case "3m":
-      return 180_000;
-    case "5m":
-      return 300_000;
-    case "10m":
-      return 600_000;
-    case "15m":
-      return 900_000;
-    case "30m":
-      return 1_800_000;
+function monthStartUtc(timestamp) {
+  const date = new Date(timestamp);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+}
+
+function timeframeOpenTime(timestamp, timeframe) {
+  const definition = TIMEFRAME_DEFINITIONS[normalizeTimeframe(timeframe)] || TIMEFRAME_DEFINITIONS["1m"];
+  const value = Number(timestamp) || 0;
+
+  if (definition.type === "fixed") {
+    return value - (value % definition.ms);
+  }
+
+  const date = new Date(value);
+  switch (definition.type) {
+    case "day":
+      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    case "week": {
+      const dayOfWeek = date.getUTCDay();
+      const mondayOffset = (dayOfWeek + 6) % 7;
+      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - mondayOffset);
+    }
+    case "month":
+      return monthStartUtc(value);
     default:
-      return 60_000;
+      return value - (value % MINUTE);
   }
 }
 
-export function frameOpenTime(timestamp, timeframe) {
+function nextFrameOpenTime(timestamp, timeframe) {
   const normalized = normalizeTimeframe(timeframe);
-  const tfMs = timeframeDurationMs(normalized, timestamp);
-  return timestamp - (timestamp % tfMs);
+  const definition = TIMEFRAME_DEFINITIONS[normalized] || TIMEFRAME_DEFINITIONS["1m"];
+  const openTime = timeframeOpenTime(timestamp, normalized);
+
+  if (definition.type === "fixed") {
+    return openTime + definition.ms;
+  }
+
+  const date = new Date(openTime);
+  switch (definition.type) {
+    case "day":
+      return openTime + DAY;
+    case "week":
+      return openTime + WEEK;
+    case "month":
+      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+    default:
+      return openTime + MINUTE;
+  }
+}
+
+export function timeframeDurationMs(timeframe, timestamp = Date.now()) {
+  const normalized = normalizeTimeframe(timeframe);
+  const definition = TIMEFRAME_DEFINITIONS[normalized] || TIMEFRAME_DEFINITIONS["1m"];
+  if (definition.type === "fixed") {
+    return definition.ms;
+  }
+  const openTime = timeframeOpenTime(timestamp, normalized);
+  return nextFrameOpenTime(openTime, normalized) - openTime;
+}
+
+export function frameOpenTime(timestamp, timeframe) {
+  return timeframeOpenTime(timestamp, timeframe);
 }
 
 function copyBookLevels(levels) {

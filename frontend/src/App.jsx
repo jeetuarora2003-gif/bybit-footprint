@@ -355,6 +355,19 @@ function getAdaptiveReadingWindow(timeframe) {
       return { recentCount: 5, futureCount: 2 };
     case "30m":
       return { recentCount: 4, futureCount: 2 };
+    case "1h":
+      return { recentCount: 4, futureCount: 2 };
+    case "2h":
+    case "4h":
+      return { recentCount: 3, futureCount: 2 };
+    case "6h":
+    case "8h":
+    case "12h":
+      return { recentCount: 3, futureCount: 1 };
+    case "D":
+    case "W":
+    case "M":
+      return { recentCount: 2, futureCount: 1 };
     default:
       return { recentCount: 8, futureCount: 2 };
   }
