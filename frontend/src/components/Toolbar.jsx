@@ -120,6 +120,14 @@ export default function Toolbar({
     value: String(value),
     label: `Tick x ${value}`,
   }));
+  const statusTone = status === "live" ? "on" : status === "stale" ? "warn" : "off";
+  const statusTitle = status === "live"
+    ? "Live"
+    : status === "stale"
+      ? "Reconnecting..."
+      : status === "connected"
+        ? "Connected"
+        : "Disconnected";
 
   const applyClusterMode = (value) => {
     updateSetting("clusterMode", value);
@@ -276,8 +284,8 @@ export default function Toolbar({
           {settings.clusterMode}
         </span>
         <div
-          className={`tb-status-dot ${status === "connected" ? "on" : "off"}`}
-          title={status === "connected" ? "Connected" : "Disconnected"}
+          className={`tb-status-dot ${statusTone}`}
+          title={statusTitle}
         />
       </div>
     </div>

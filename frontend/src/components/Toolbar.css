@@ -146,6 +146,10 @@
   background: var(--green);
   box-shadow: 0 0 6px var(--green);
 }
+.tb-status-dot.warn {
+  background: #facc15;
+  box-shadow: 0 0 6px #facc15;
+}
 .tb-status-dot.off {
   background: var(--red);
   box-shadow: 0 0 6px var(--red);

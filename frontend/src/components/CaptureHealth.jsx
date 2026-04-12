@@ -14,7 +14,8 @@ function formatAge(timestamp, now) {
 }
 
 function resolveHealthTone(status, captureStats, now) {
-  if (status !== "connected") return "down";
+  if (status === "disconnected" || status === "connecting") return "down";
+  if (status === "stale") return "stale";
 
   const tradeAge = now - (Number(captureStats?.lastTradeTimestamp) || 0);
   const depthAge = now - (Number(captureStats?.lastDepthTimestamp) || 0);

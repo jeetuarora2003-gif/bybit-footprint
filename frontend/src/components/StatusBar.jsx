@@ -33,6 +33,13 @@ export default function StatusBar({
   onCycleReplaySpeed,
 }) {
   const now = new Date();
+  const statusColor = status === "live"
+    ? "var(--green)"
+    : status === "stale"
+      ? "#facc15"
+      : status === "connected"
+        ? "var(--green)"
+        : "var(--red)";
   const clock = now.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -119,7 +126,7 @@ export default function StatusBar({
       </div>
 
       <div className="stb-right">
-        <span className="stb-dot" style={{ background: status === "connected" ? "var(--green)" : "var(--red)" }} />
+        <span className="stb-dot" style={{ background: statusColor }} />
         <span className="stb-info">{status}</span>
         <span className="stb-sep">|</span>
         {replay?.enabled ? (

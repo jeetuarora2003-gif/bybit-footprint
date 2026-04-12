@@ -199,7 +199,7 @@ const (
 	maxRecentTrades         = 1000
 	maxRecentDepthSnapshots = 1000
 	defaultHTTPPort         = "8080"
-	bybitReconnectDelay     = 5 * time.Second
+	bybitReconnectDelay     = 1 * time.Second
 )
 
 var allowedFrontendOrigins = map[string]struct{}{

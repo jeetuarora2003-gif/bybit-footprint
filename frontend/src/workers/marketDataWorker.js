@@ -29,6 +29,7 @@ const MAX_SEEN_TRADE_IDS = 200_000;
 const SEEN_TRADE_ID_TRIM_BATCH = 1024;
 const RECONNECT_MS = 2_000;
 const BROADCAST_MS = 250;
+const FEED_STALE_MS = 4_000;
 const BOOK_LEVELS = 40;
 const REPLAY_WINDOW_MS = 30 * 60_000;
 const REPLAY_MIN_EVENTS = 50;
@@ -118,6 +119,7 @@ function createEngine() {
     lastTradeTimestamp: 0,
     lastDepthTimestamp: 0,
     lastTickerTimestamp: 0,
+    lastBackendCandleTimestamp: 0,
     reconnectCount: 0,
     seenTradeIds: [],
     seenTradeSet: new Set(),
@@ -162,6 +164,7 @@ function createEngine() {
     state.lastTradeTimestamp = 0;
     state.lastDepthTimestamp = 0;
     state.lastTickerTimestamp = 0;
+    state.lastBackendCandleTimestamp = 0;
     state.reconnectCount = 0;
     state.seenTradeIds = [];
     state.seenTradeSet = new Set();
@@ -620,6 +623,17 @@ function createEngine() {
 
   function startBroadcastLoop() {
     state.broadcastId = setInterval(() => {
+      if (!state.replay.enabled && state.ws?.readyState === WebSocket.OPEN) {
+        const now = Date.now();
+        if (
+          state.lastBackendCandleTimestamp > 0
+          && now-state.lastBackendCandleTimestamp > FEED_STALE_MS
+          && state.status !== "stale"
+        ) {
+          setStatus("stale");
+        }
+      }
+
       const depthSnapshot = buildDepthSnapshot();
       if (depthSnapshot) {
         state.depthHistory.push(depthSnapshot);
@@ -716,6 +730,10 @@ function createEngine() {
     state.bestAsk = Number(liveBar.best_ask) || 0;
     state.bestAskSize = Number(liveBar.best_ask_size) || 0;
     state.lastTickerTimestamp = Date.now();
+    state.lastBackendCandleTimestamp = Date.now();
+    if (state.status !== "live") {
+      setStatus("live");
+    }
 
     if (Array.isArray(liveBar.bids)) {
       state.bids = new Map();

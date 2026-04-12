@@ -240,7 +240,7 @@ function computeFreshFeed(status, captureStats, candle, requireLiveFeed) {
     return { ok: true, reason: "" };
   }
 
-  if (status !== "connected") {
+  if (status !== "connected" && status !== "live") {
     return { ok: false, reason: "Feed disconnected" };
   }
 
