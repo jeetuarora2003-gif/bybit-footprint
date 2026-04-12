@@ -161,6 +161,8 @@ type instrumentInfo struct {
 	MinNotional  float64 `json:"minNotionalValue"`
 	PriceScale   int     `json:"priceScale"`
 	DefaultTicks []int   `json:"defaultTicks"`
+	VolumeUnit   string  `json:"volumeUnit"`
+	SyntheticBTC bool    `json:"syntheticBtc"`
 }
 
 type interpretRequest struct {
@@ -778,7 +780,7 @@ func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, 
 
 		var oldestTS int64
 		for _, item := range result.List {
-			if len(item) < 6 {
+			if len(item) < 7 {
 				continue
 			}
 
@@ -791,24 +793,25 @@ func fetchRecentKlines(ctx context.Context, client *http.Client, symbol string, 
 			high, err2 := strconv.ParseFloat(item[2], 64)
 			low, err3 := strconv.ParseFloat(item[3], 64)
 			closeValue, err4 := strconv.ParseFloat(item[4], 64)
-			volume, err5 := strconv.ParseFloat(item[5], 64)
+			turnover, err5 := strconv.ParseFloat(item[6], 64)
 			if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
 				continue
 			}
 
 			barsByOpenTime[openTime] = historyBar{
-				CandleOpenTime:    openTime,
-				Open:              round6(open),
-				High:              round6(high),
-				Low:               round6(low),
-				Close:             round6(closeValue),
-				RowSize:           rowSize,
-				Clusters:          []historyCluster{},
-				CandleDelta:       0,
-				CVD:               0,
-				BuyTrades:         0,
-				SellTrades:        0,
-				TotalVolume:       round6(volume),
+				CandleOpenTime: openTime,
+				Open:           round6(open),
+				High:           round6(high),
+				Low:            round6(low),
+				Close:          round6(closeValue),
+				RowSize:        rowSize,
+				Clusters:       []historyCluster{},
+				CandleDelta:    0,
+				CVD:            0,
+				BuyTrades:      0,
+				SellTrades:     0,
+				// For inverse BTCUSD, Bybit kline turnover is base-coin BTC volume.
+				TotalVolume:       round8(turnover),
 				BuyVolume:         0,
 				SellVolume:        0,
 				OI:                0,
@@ -946,6 +949,8 @@ func fetchInstrumentInfo(ctx context.Context, client *http.Client, symbol string
 		MinNotional:  parseFloatOrDefault(item.LotSizeFilter.MinNotional, 0),
 		PriceScale:   priceScale,
 		DefaultTicks: defaultTickMultipliers(tickSize),
+		VolumeUnit:   strings.ToUpper(strings.TrimSpace(item.BaseCoin)),
+		SyntheticBTC: true,
 	}, nil
 }
 
@@ -1044,6 +1049,10 @@ func clampInt(value string, minValue int, maxValue int, fallback int) int {
 
 func round6(value float64) float64 {
 	return math.Round(value*1e6) / 1e6
+}
+
+func round8(value float64) float64 {
+	return math.Round(value*1e8) / 1e8
 }
 
 func parseFloatOrDefault(value string, fallback float64) float64 {

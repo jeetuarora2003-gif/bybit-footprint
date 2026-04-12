@@ -114,12 +114,16 @@ function normalizeInstrument(payload, fallbackSymbol) {
   if (!payload) {
     return {
       symbol: fallbackSymbol,
+      baseCoin: "",
+      quoteCoin: "",
       tickSize: 0.1,
       qtyStep: 0,
       minOrderQty: 0,
       maxOrderQty: 0,
       minNotionalValue: 0,
       priceScale: 1,
+      volumeUnit: "",
+      syntheticBtc: false,
       defaultTicks: [1, 5, 10, 25, 50, 100],
     };
   }
@@ -134,6 +138,8 @@ function normalizeInstrument(payload, fallbackSymbol) {
     maxOrderQty: Number(payload.maxOrderQty) || 0,
     minNotionalValue: Number(payload.minNotionalValue) || 0,
     priceScale: Number(payload.priceScale) || 1,
+    volumeUnit: String(payload.volumeUnit || payload.baseCoin || "").toUpperCase(),
+    syntheticBtc: Boolean(payload.syntheticBtc),
     defaultTicks: Array.isArray(payload.defaultTicks) && payload.defaultTicks.length
       ? payload.defaultTicks.map((item) => Number(item) || 1).filter((item) => item > 0)
       : [1, 5, 10, 25, 50, 100],

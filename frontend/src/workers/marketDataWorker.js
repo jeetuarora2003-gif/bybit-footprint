@@ -625,14 +625,16 @@ function createEngine() {
     const trades = Array.isArray(message?.data) ? message.data : [];
     for (const trade of trades) {
       const price = Number.parseFloat(trade?.p);
-      const volume = Number.parseFloat(trade?.v);
+      const contracts = Number.parseFloat(trade?.v);
       const side = trade?.S;
       const timestamp = Number(trade?.T) || 0;
       const seq = Number(trade?.seq) || 0;
       const tradeId = typeof trade?.i === "string" ? trade.i : "";
-      if (!Number.isFinite(price) || !Number.isFinite(volume) || price <= 0 || volume <= 0 || !timestamp) {
+      if (!Number.isFinite(price) || !Number.isFinite(contracts) || price <= 0 || contracts <= 0 || !timestamp) {
         continue;
       }
+      const volume = contracts / price;
+      if (!Number.isFinite(volume) || volume <= 0) continue;
       processTrade({ price, volume, side, timestamp, seq, tradeId });
     }
   }
@@ -1395,6 +1397,8 @@ function normalizeInstrument(payload, fallbackSymbol) {
     maxOrderQty: Number(payload?.maxOrderQty) || 0,
     minNotionalValue: Number(payload?.minNotionalValue) || 0,
     priceScale: Number(payload?.priceScale) || 1,
+    volumeUnit: String(payload?.volumeUnit || payload?.baseCoin || "").toUpperCase(),
+    syntheticBtc: Boolean(payload?.syntheticBtc),
     defaultTicks: Array.isArray(payload?.defaultTicks) && payload.defaultTicks.length
       ? payload.defaultTicks.map((item) => Number(item) || 1).filter((item) => item > 0)
       : [1, 5, 10, 25, 50, 100],

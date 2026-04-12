@@ -17,6 +17,8 @@ type persistenceStore struct {
 	db *sql.DB
 }
 
+const feedIdentityMetaKey = "feed_identity"
+
 func newPersistenceStore(baseDir string) (*persistenceStore, error) {
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, err
@@ -58,9 +60,49 @@ func (ps *persistenceStore) initSchema() error {
 		payload TEXT NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_depth_timestamp ON depth(timestamp);
+	CREATE TABLE IF NOT EXISTS metadata (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
 	`
 	_, err := ps.db.Exec(schema)
 	return err
+}
+
+func (ps *persistenceStore) EnsureFeedIdentity(identity string) (bool, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	var current string
+	err := ps.db.QueryRow(`SELECT value FROM metadata WHERE key = ?`, feedIdentityMetaKey).Scan(&current)
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	if current == identity {
+		return false, nil
+	}
+
+	err = ps.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM bars`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM tape`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM depth`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`
+			INSERT INTO metadata (key, value)
+			VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value
+		`, feedIdentityMetaKey, identity)
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (ps *persistenceStore) Load() ([]BroadcastMsg, []TapeTrade, []DepthSnapshot, error) {

@@ -127,8 +127,9 @@ export default function App() {
   useEffect(() => {
     configureFootprintFormatter({
       quantityStep: instrument?.qtyStep || 1,
+      rawVolume: Boolean(instrument?.syntheticBtc),
     });
-  }, [instrument?.qtyStep]);
+  }, [instrument?.qtyStep, instrument?.syntheticBtc]);
 
   const allCandles = useMemo(() => (liveCandle ? [...candles, liveCandle] : candles), [candles, liveCandle]);
   const resolvedSettings = useMemo(() => ({

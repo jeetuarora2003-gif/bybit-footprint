@@ -171,13 +171,18 @@ type BroadcastMsg struct {
 //  Candle aggregator
 // ════════════════════════════════════════════════════════════════════
 
-// Bybit BTCUSDT linear priceFilter.tickSize is 0.10 as of 2026-04-08.
-const rowSize = 0.10
-const maxHistory = 20000
-const maxSeenTradeIDs = 200000
-const seenTradeIDTrimBatch = 1024
-const maxRecentTrades = 5000
-const maxRecentDepthSnapshots = 24000
+const (
+	bybitSymbol             = "BTCUSD"
+	bybitCategory           = "inverse"
+	bybitWSURL              = "wss://stream.bybit.com/v5/public/inverse"
+	rootFeedIdentity        = "bybit:inverse:BTCUSD:synthetic-btc-v1"
+	rowSize                 = 0.10
+	maxHistory              = 20000
+	maxSeenTradeIDs         = 200000
+	seenTradeIDTrimBatch    = 1024
+	maxRecentTrades         = 5000
+	maxRecentDepthSnapshots = 24000
+)
 
 type bucketAccum struct {
 	buyVol       float64
@@ -307,19 +312,22 @@ func annotateClusterSignals(clusters []Cluster) clusterSignalSummary {
 		if cluster.LargeTradeBuy || cluster.LargeTradeSell {
 			summary.LargeTradeCount += 1
 		}
+		// Exocharts-style diagonal imbalance:
+		// buy/ask aggression at the current level vs sell/bid one level below,
+		// and sell/bid aggression at the current level vs buy/ask one level above.
 		if i > 0 {
 			below := clusters[i-1]
-			if below.BuyVol > 0 && cluster.SellVol >= below.BuyVol*cfg.ImbalanceThreshold && cluster.SellVol >= cfg.MinImbalanceVolume {
-				bearish[i] = true
-				cluster.ImbalanceSell = true
+			if below.SellVol > 0 && cluster.BuyVol >= below.SellVol*cfg.ImbalanceThreshold && cluster.BuyVol >= cfg.MinImbalanceVolume {
+				bullish[i] = true
+				cluster.ImbalanceBuy = true
 				summary.ImbalanceCount += 1
 			}
 		}
 		if i+1 < len(clusters) {
 			above := clusters[i+1]
-			if above.SellVol > 0 && cluster.BuyVol >= above.SellVol*cfg.ImbalanceThreshold && cluster.BuyVol >= cfg.MinImbalanceVolume {
-				bullish[i] = true
-				cluster.ImbalanceBuy = true
+			if above.BuyVol > 0 && cluster.SellVol >= above.BuyVol*cfg.ImbalanceThreshold && cluster.SellVol >= cfg.MinImbalanceVolume {
+				bearish[i] = true
+				cluster.ImbalanceSell = true
 				summary.ImbalanceCount += 1
 			}
 		}
@@ -500,6 +508,10 @@ func lastCompletedBar(bars []BroadcastMsg) *BroadcastMsg {
 
 func round6(v float64) float64 {
 	return math.Round(v*1e6) / 1e6
+}
+
+func round8(v float64) float64 {
+	return math.Round(v*1e8) / 1e8
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -767,6 +779,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("persistence init: %v", err)
 	}
+	if reset, err := store.EnsureFeedIdentity(rootFeedIdentity); err != nil {
+		log.Fatalf("store identity init: %v", err)
+	} else if reset {
+		log.Printf("[store] cleared persisted cache for %s", rootFeedIdentity)
+	}
 
 	var (
 		mu            sync.Mutex
@@ -795,7 +812,7 @@ func main() {
 		return tsMs - (tsMs % 60000)
 	}
 
-	if hydratedBars, err := hydrateHistoricalBars(restClient, "BTCUSDT", completedBars); err != nil {
+	if hydratedBars, err := hydrateHistoricalBars(restClient, bybitSymbol, completedBars); err != nil {
 		log.Printf("[bybit] historical backfill failed: %v", err)
 	} else {
 		completedBars = hydratedBars
@@ -810,7 +827,7 @@ func main() {
 		oi.prevBar = lastBar.OI
 	}
 
-	if seededTrades, err := fetchBybitRecentTrades(restClient, "BTCUSDT", 1000); err != nil {
+	if seededTrades, err := fetchBybitRecentTrades(restClient, bybitSymbol, 1000); err != nil {
 		log.Printf("[bybit] recent trade seed failed: %v", err)
 	} else {
 		recentTrades = mergeTapeTrades(recentTrades, seededTrades)
@@ -827,7 +844,7 @@ func main() {
 	}
 	rebuildCurrentFromTape(recentTrades, replayAfterTs, candleOpenTime, &candle, &cvd, &lastSeq)
 
-	if currentOI, err := fetchBybitCurrentOpenInterest(restClient, "BTCUSDT"); err != nil {
+	if currentOI, err := fetchBybitCurrentOpenInterest(restClient, bybitSymbol); err != nil {
 		log.Printf("[bybit] current OI seed failed: %v", err)
 	} else if currentOI > 0 {
 		oi.update(currentOI)
@@ -945,11 +962,15 @@ func main() {
 			}
 			for _, bt := range env.Data {
 				price, _ := strconv.ParseFloat(bt.P, 64)
-				vol, _ := strconv.ParseFloat(bt.V, 64)
-				if price == 0 || vol == 0 {
+				contracts, _ := strconv.ParseFloat(bt.V, 64)
+				if price == 0 || contracts == 0 {
 					continue
 				}
-				processTrade(price, vol, bt.S, bt.T, bt.Seq, bt.ID)
+				btcVol := contracts / price
+				if btcVol == 0 {
+					continue
+				}
+				processTrade(price, btcVol, bt.S, bt.T, bt.Seq, bt.ID)
 			}
 		}
 	}()
@@ -1254,7 +1275,7 @@ func main() {
 	})
 
 	fmt.Println("▶  Footprint WS server on :8080")
-	fmt.Println("   Streams: publicTrade + orderbook.50 + tickers (BTCUSDT)")
+	fmt.Printf("   Streams: publicTrade + orderbook.50 + tickers (%s %s synthetic BTC)\n", bybitSymbol, bybitCategory)
 	fmt.Println("   History endpoint: GET /history")
 	fmt.Println("   Depth history endpoint: GET /depth-history")
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -1265,10 +1286,8 @@ func main() {
 // ════════════════════════════════════════════════════════════════════
 
 func connectBybit(tradeCh chan<- []byte, miscCh chan<- []byte) error {
-	const url = "wss://stream.bybit.com/v5/public/linear"
-
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	conn, _, err := dialer.Dial(url, nil)
+	conn, _, err := dialer.Dial(bybitWSURL, nil)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -1279,9 +1298,9 @@ func connectBybit(tradeCh chan<- []byte, miscCh chan<- []byte) error {
 	sub := map[string]interface{}{
 		"op": "subscribe",
 		"args": []string{
-			"publicTrade.BTCUSDT",
-			"orderbook.50.BTCUSDT",
-			"tickers.BTCUSDT",
+			"publicTrade." + bybitSymbol,
+			"orderbook.50." + bybitSymbol,
+			"tickers." + bybitSymbol,
 		},
 	}
 	if err := conn.WriteJSON(sub); err != nil {

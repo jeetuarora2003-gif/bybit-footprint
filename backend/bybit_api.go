@@ -100,7 +100,7 @@ func fetchBybitJSON[T any](client *http.Client, path string, params url.Values, 
 
 func fetchBybitRecentTrades(client *http.Client, symbol string, limit int) ([]TapeTrade, error) {
 	params := url.Values{
-		"category": []string{"linear"},
+		"category": []string{bybitCategory},
 		"symbol":   []string{symbol},
 		"limit":    []string{strconv.Itoa(limit)},
 	}
@@ -113,16 +113,20 @@ func fetchBybitRecentTrades(client *http.Client, symbol string, limit int) ([]Ta
 	trades := make([]TapeTrade, 0, len(result.List))
 	for _, item := range result.List {
 		price, _ := strconv.ParseFloat(item.Price, 64)
-		size, _ := strconv.ParseFloat(item.Size, 64)
+		contracts, _ := strconv.ParseFloat(item.Size, 64)
 		ts, _ := strconv.ParseInt(item.Time, 10, 64)
 		seq, _ := strconv.ParseInt(item.Seq, 10, 64)
-		if price == 0 || size == 0 || ts == 0 {
+		if price == 0 || contracts == 0 || ts == 0 {
+			continue
+		}
+		btcVol := contracts / price
+		if btcVol == 0 {
 			continue
 		}
 		trades = append(trades, TapeTrade{
 			ID:        item.ExecID,
 			Price:     round6(price),
-			Volume:    round6(size),
+			Volume:    round8(btcVol),
 			Side:      item.Side,
 			Timestamp: ts,
 			Seq:       seq,
@@ -135,7 +139,7 @@ func fetchBybitRecentTrades(client *http.Client, symbol string, limit int) ([]Ta
 
 func fetchBybitCurrentOpenInterest(client *http.Client, symbol string) (float64, error) {
 	params := url.Values{
-		"category": []string{"linear"},
+		"category": []string{bybitCategory},
 		"symbol":   []string{symbol},
 	}
 
@@ -165,7 +169,7 @@ func fetchBybitKlineRange(client *http.Client, symbol string, startTs, endTs int
 
 	for page := 0; page < maxBackfillPages; page += 1 {
 		params := url.Values{
-			"category": []string{"linear"},
+			"category": []string{bybitCategory},
 			"symbol":   []string{symbol},
 			"interval": []string{"1"},
 			"start":    []string{strconv.FormatInt(startTs, 10)},
@@ -191,8 +195,8 @@ func fetchBybitKlineRange(client *http.Client, symbol string, startTs, endTs int
 			high, errHigh := strconv.ParseFloat(item[2], 64)
 			low, errLow := strconv.ParseFloat(item[3], 64)
 			closePrice, errClose := strconv.ParseFloat(item[4], 64)
-			volume, errVolume := strconv.ParseFloat(item[5], 64)
-			if errTs != nil || errOpen != nil || errHigh != nil || errLow != nil || errClose != nil || errVolume != nil {
+			turnover, errTurnover := strconv.ParseFloat(item[6], 64)
+			if errTs != nil || errOpen != nil || errHigh != nil || errLow != nil || errClose != nil || errTurnover != nil {
 				continue
 			}
 			if openTime < startTs || openTime > endTs {
@@ -205,7 +209,9 @@ func fetchBybitKlineRange(client *http.Client, symbol string, startTs, endTs int
 				High:     round6(high),
 				Low:      round6(low),
 				Close:    round6(closePrice),
-				Volume:   round6(volume),
+				// For inverse BTCUSD, Bybit kline turnover is base-coin BTC volume.
+				// Using it keeps backfill candle volume in the same unit as synthetic live trade volume.
+				Volume: round8(turnover),
 			}
 			if oldestTs == 0 || openTime < oldestTs {
 				oldestTs = openTime
@@ -244,7 +250,7 @@ func fetchBybitOpenInterestHistory(client *http.Client, symbol string, earliestT
 
 	for page := 0; page < maxBackfillPages; page += 1 {
 		params := url.Values{
-			"category":     []string{"linear"},
+			"category":     []string{bybitCategory},
 			"symbol":       []string{symbol},
 			"intervalTime": []string{"5min"},
 			"limit":        []string{"200"},

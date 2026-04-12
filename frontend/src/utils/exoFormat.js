@@ -7,6 +7,7 @@ export function formatPrice(value, digits = 1) {
 }
 
 let displayQuantityStep = 1;
+let useRawVolumeDisplay = false;
 
 function normalizeQuantityStep(value) {
   const numeric = Number(value);
@@ -15,12 +16,18 @@ function normalizeQuantityStep(value) {
 
 export function configureFootprintFormatter(options = {}) {
   displayQuantityStep = normalizeQuantityStep(options.quantityStep);
+  useRawVolumeDisplay = Boolean(options.rawVolume);
 }
 
 function toDisplayLots(value, quantityStep = displayQuantityStep) {
   if (value == null || Number.isNaN(Number(value))) return null;
   // Display volume in exchange-native contract/lot units for the active instrument.
   return Math.round(Number(value) / normalizeQuantityStep(quantityStep));
+}
+
+function formatRawValue(value, digits = 4) {
+  if (value == null || Number.isNaN(Number(value))) return "-";
+  return trimTrailingZeros(Number(value), digits);
 }
 
 function formatWholeNumber(value) {
@@ -77,12 +84,25 @@ export function formatSignedShortOriginalValue(value, digits = 1) {
 }
 
 export function formatCompactValue(value, options = {}) {
+  if (options.rawVolume ?? useRawVolumeDisplay) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "-";
+    return formatShortNumber(numeric, 2);
+  }
   const lots = toDisplayLots(value, options.quantityStep);
   if (lots == null) return "-";
   return formatShortWholeNumber(lots);
 }
 
 export function formatSignedCompactValue(value, options = {}) {
+  if (options.rawVolume ?? useRawVolumeDisplay) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "-";
+    const formatted = formatShortNumber(Math.abs(numeric), 2);
+    if (numeric > 0) return `+${formatted}`;
+    if (numeric < 0) return `-${formatted}`;
+    return "0";
+  }
   const lots = toDisplayLots(value, options.quantityStep);
   if (lots == null) return "-";
   const formatted = formatShortWholeNumber(Math.abs(lots));
@@ -92,6 +112,18 @@ export function formatSignedCompactValue(value, options = {}) {
 }
 
 export function formatFootprintValue(value, options = {}) {
+  if (options.rawVolume ?? useRawVolumeDisplay) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric === 0) return "";
+    const { signed = false, shortNumbers = false } = options;
+    const rendered = shortNumbers
+      ? formatShortNumber(Math.abs(numeric), 2)
+      : formatRawValue(Math.abs(numeric), 4);
+    if (signed && numeric > 0) return `+${rendered}`;
+    if (numeric < 0) return `-${rendered}`;
+    return rendered;
+  }
+
   const lots = toDisplayLots(value, options.quantityStep) ?? 0;
   if (lots === 0) return "";
 
