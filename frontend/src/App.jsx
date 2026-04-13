@@ -126,6 +126,9 @@ export default function App() {
     liveCandle,
     depthHistory,
     status,
+    activeDetectorEvents,
+    detectorWinRateLast100,
+    detectorTotalSignalsSession,
     replayState,
     startReplay: startReplayEngine,
     stopReplay: stopReplayEngine,
@@ -270,6 +273,7 @@ export default function App() {
             <ChartCanvas
               candles={allCandles}
               depthHistory={depthHistory}
+              detectorEvents={activeDetectorEvents}
               settings={resolvedSettings}
               activeFeatures={activeFeatures}
               onCrosshairMove={setCrosshairData}
@@ -287,6 +291,8 @@ export default function App() {
         onAutoFitView={() => issueViewCommand("fit")}
         settings={resolvedSettings}
         instrument={instrument}
+        totalSignalsSession={detectorTotalSignalsSession}
+        winRateLast100={detectorWinRateLast100}
         replay={replay}
         onStartReplay={startReplay}
         onStopReplay={stopReplay}

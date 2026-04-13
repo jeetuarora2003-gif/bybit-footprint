@@ -4,6 +4,7 @@ import { drawCandle } from "./chart/candleLayer";
 import {
   applyVWAP,
   drawCrosshair,
+  drawDetectorEvents,
   drawDOM,
   drawDepthHistoryHeatmap,
   drawGrid,
@@ -39,6 +40,7 @@ function markForRedraw(state) {
 export default function ChartCanvas({
   candles,
   depthHistory = [],
+  detectorEvents = [],
   settings,
   activeFeatures,
   annotations = [],
@@ -52,6 +54,7 @@ export default function ChartCanvas({
 
   const candlesRef = useRef(candles);
   const depthHistoryRef = useRef(depthHistory);
+  const detectorEventsRef = useRef(detectorEvents);
   const settingsRef = useRef(settings);
   const featuresRef = useRef(activeFeatures);
   const annotationsRef = useRef(annotations);
@@ -60,12 +63,13 @@ export default function ChartCanvas({
   useEffect(() => {
     candlesRef.current = candles;
     depthHistoryRef.current = depthHistory;
+    detectorEventsRef.current = detectorEvents;
     settingsRef.current = settings;
     featuresRef.current = activeFeatures;
     annotationsRef.current = annotations;
     crosshairCbRef.current = onCrosshairMove;
     markForRedraw(stateRef.current);
-  }, [candles, depthHistory, settings, activeFeatures, annotations, onCrosshairMove]);
+  }, [candles, depthHistory, detectorEvents, settings, activeFeatures, annotations, onCrosshairMove]);
 
   /* eslint-disable react-hooks/immutability */
   useEffect(() => {
@@ -154,6 +158,7 @@ export default function ChartCanvas({
           state,
           candlesRef.current,
           depthHistoryRef.current,
+          detectorEventsRef.current,
           settingsRef.current,
           featuresRef.current,
           annotationsRef.current,
@@ -393,7 +398,7 @@ export default function ChartCanvas({
   );
 }
 
-function drawFrame(canvas, container, state, candles, depthHistory, settings, activeFeatures, annotations) {
+function drawFrame(canvas, container, state, candles, depthHistory, detectorEvents, settings, activeFeatures, annotations) {
   if (!canvas || !container || !candles?.length) return;
 
   const dpr = window.devicePixelRatio || 1;
@@ -557,6 +562,10 @@ function drawFrame(canvas, container, state, candles, depthHistory, settings, ac
 
   if (settings.showCallouts && annotations?.length) {
     drawSetupAnnotations(ctx, annotations, visible, startIdx, i2x, p2y, chartW, chartH, rowSize);
+  }
+
+  if (detectorEvents?.length) {
+    drawDetectorEvents(ctx, detectorEvents, chartW, chartH, p2y);
   }
 
   drawPriceAxis(ctx, chartW, chartH, PRICE_AXIS_W, pMin, pMax, niceStep(priceRange), p2y, visible, modeFlags, settings.symbol);

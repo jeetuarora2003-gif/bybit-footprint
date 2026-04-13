@@ -695,6 +695,7 @@ function createEngine() {
     const eventType = typeof message?.type === "string" ? message.type : "";
     if (eventType === "candle") {
       handleBackendCandle(normalizeBackendCandlePayload(message));
+      emitDetectorSnapshot(normalizeDetectorSnapshot(message?.detector));
       return;
     }
     if (eventType === "depth") {
@@ -1540,6 +1541,13 @@ function createEngine() {
     });
   }
 
+  function emitDetectorSnapshot(payload) {
+    postMessage({
+      type: "detector",
+      payload,
+    });
+  }
+
   function emitFullSnapshot() {
     if (state.replay.enabled) {
       emitReplaySnapshot();
@@ -1716,6 +1724,38 @@ function normalizeBackendCandlePayload(message) {
     recent_trades: Array.isArray(payload?.recent_trades ?? payload?.recentTrades)
       ? (payload.recent_trades ?? payload.recentTrades)
       : [],
+  };
+}
+
+function normalizeDetectorEvent(event) {
+  return {
+    id: String(event?.id || ""),
+    type: String(event?.type || ""),
+    strength: String(event?.strength || ""),
+    score: Number(event?.score) || 0,
+    range_source: String(event?.range_source || ""),
+    swept_level: Number(event?.swept_level) || 0,
+    excursion_ticks: Number(event?.excursion_ticks) || 0,
+    reclaimed_in: String(event?.reclaimed_in || ""),
+    extreme_imbalance: Boolean(event?.extreme_imbalance),
+    delta_zscore: Number(event?.delta_zscore) || 0,
+    depletion_ratio: Number(event?.depletion_ratio) || 0,
+    wick_pct: Number(event?.wick_pct) || 0,
+    imbalance_count: Number(event?.imbalance_count) || 0,
+    expires_after: Number(event?.expires_after) || 0,
+    outcome: String(event?.outcome || "PENDING"),
+    event_candle_open_time: Number(event?.event_candle_open_time) || 0,
+    resolved_candle_open_time: Number(event?.resolved_candle_open_time) || 0,
+  };
+}
+
+function normalizeDetectorSnapshot(snapshot) {
+  return {
+    active_events: Array.isArray(snapshot?.active_events)
+      ? snapshot.active_events.map(normalizeDetectorEvent).filter((event) => event.id)
+      : [],
+    win_rate_last_100: Number(snapshot?.win_rate_last_100) || 0,
+    total_signals_session: Number(snapshot?.total_signals_session) || 0,
   };
 }
 

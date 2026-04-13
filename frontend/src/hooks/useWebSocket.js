@@ -143,12 +143,45 @@ function normalizeInstrument(payload, fallbackSymbol) {
   };
 }
 
+function normalizeDetectorEvent(event) {
+  return {
+    id: String(event?.id || ""),
+    type: String(event?.type || ""),
+    strength: String(event?.strength || ""),
+    score: Number(event?.score) || 0,
+    range_source: String(event?.range_source || ""),
+    swept_level: Number(event?.swept_level) || 0,
+    excursion_ticks: Number(event?.excursion_ticks) || 0,
+    reclaimed_in: String(event?.reclaimed_in || ""),
+    extreme_imbalance: Boolean(event?.extreme_imbalance),
+    delta_zscore: Number(event?.delta_zscore) || 0,
+    depletion_ratio: Number(event?.depletion_ratio) || 0,
+    wick_pct: Number(event?.wick_pct) || 0,
+    imbalance_count: Number(event?.imbalance_count) || 0,
+    expires_after: Number(event?.expires_after) || 0,
+    outcome: String(event?.outcome || "PENDING"),
+    event_candle_open_time: Number(event?.event_candle_open_time) || 0,
+    resolved_candle_open_time: Number(event?.resolved_candle_open_time) || 0,
+  };
+}
+
+function normalizeDetectorSnapshot(payload) {
+  return {
+    activeEvents: Array.isArray(payload?.active_events)
+      ? payload.active_events.map(normalizeDetectorEvent).filter((event) => event.id)
+      : [],
+    winRateLast100: Number(payload?.win_rate_last_100) || 0,
+    totalSignalsSession: Number(payload?.total_signals_session) || 0,
+  };
+}
+
 export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol = DEFAULT_SYMBOL } = {}) {
   const normalizedSymbol = normalizeInverseSymbol(symbol);
   const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
   const [depthHistory, setDepthHistory] = useState([]);
   const [status, setStatus] = useState("disconnected");
+  const [detectorState, setDetectorState] = useState(() => normalizeDetectorSnapshot(null));
   const [instrument, setInstrument] = useState(() => normalizeInstrument(null, normalizedSymbol));
   const [captureStats, setCaptureStats] = useState({
     tradeEvents: 0,
@@ -210,6 +243,7 @@ export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol 
   }, []);
 
   useEffect(() => {
+    setDetectorState(normalizeDetectorSnapshot(null));
     const worker = new Worker(new URL("../workers/marketDataWorker.js", import.meta.url), {
       type: "module",
     });
@@ -246,6 +280,8 @@ export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol 
           lastTickerTimestamp: Number(payload?.lastTickerTimestamp) || 0,
           reconnectCount: Number(payload?.reconnectCount) || 0,
         });
+      } else if (type === "detector") {
+        setDetectorState(normalizeDetectorSnapshot(payload));
       }
     };
 
@@ -295,6 +331,9 @@ export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol 
     liveCandle,
     depthHistory,
     status,
+    activeDetectorEvents: detectorState.activeEvents,
+    detectorWinRateLast100: detectorState.winRateLast100,
+    detectorTotalSignalsSession: detectorState.totalSignalsSession,
     instrument,
     captureStats,
     replayState,

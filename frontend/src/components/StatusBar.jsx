@@ -25,6 +25,8 @@ export default function StatusBar({
   onAutoFitView,
   settings,
   instrument,
+  totalSignalsSession = 0,
+  winRateLast100 = 0,
   replay,
   onStartReplay,
   onStopReplay,
@@ -51,6 +53,7 @@ export default function StatusBar({
   const hasReliableOrderflow = Number(referenceCandle?.orderflow_coverage ?? 0) >= 0.999;
   const studySignals = summarizeStudySignals(referenceCandle).slice(0, 2);
   const coverage = referenceCandle ? `${((Number(referenceCandle.orderflow_coverage) || 0) * 100).toFixed(1)}%` : "-";
+  const sweepWinRate = `${(Math.max(0, Number(winRateLast100) || 0) * 100).toFixed(1)}%`;
   const replayTime = replay?.enabled && liveCandle?.candle_open_time
     ? new Date(Number(liveCandle.candle_open_time)).toLocaleTimeString([], {
       hour: "2-digit",
@@ -106,6 +109,10 @@ export default function StatusBar({
         <span className="stb-sep">|</span>
         <span className="stb-info">
           Symbol: {instrument?.symbol || settings.symbol || "-"}
+        </span>
+        <span className="stb-sep">|</span>
+        <span className="stb-info">
+          SWEEPS: {Math.max(0, Number(totalSignalsSession) || 0)} | Win: {sweepWinRate}
         </span>
         {studySignals.length > 0 && (
           <>

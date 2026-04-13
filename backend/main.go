@@ -51,6 +51,7 @@ type OrderbookData struct {
 	A   [][]string `json:"a"`
 	U   int64      `json:"u"`
 	Seq int64      `json:"seq"`
+	CTS int64      `json:"cts"`
 }
 
 type TickerEnvelope struct {
@@ -686,6 +687,26 @@ func (ob *OrderBook) topLevels(n int) (bids, asks []BookLevel) {
 	return
 }
 
+func (ob *OrderBook) levelsMap() map[float64]float64 {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+
+	levels := make(map[float64]float64, len(ob.bids)+len(ob.asks))
+	for p, s := range ob.bids {
+		pf, _ := strconv.ParseFloat(p, 64)
+		if pf > 0 && s > 0 {
+			levels[round6(pf)] = round6(s)
+		}
+	}
+	for p, s := range ob.asks {
+		pf, _ := strconv.ParseFloat(p, 64)
+		if pf > 0 && s > 0 {
+			levels[round6(pf)] = round6(s)
+		}
+	}
+	return levels
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  OI tracker
 // ════════════════════════════════════════════════════════════════════
@@ -765,7 +786,7 @@ func (h *hub) broadcast(data []byte) {
 	}
 }
 
-func (h *hub) broadcastCandles(history []BroadcastMsg, live BroadcastMsg) {
+func (h *hub) broadcastCandles(history []BroadcastMsg, live BroadcastMsg, detector DetectorSnapshot) {
 	h.mu.RLock()
 	clients := make(map[*websocket.Conn]clientConfig, len(h.clients))
 	for conn, cfg := range h.clients {
@@ -774,13 +795,13 @@ func (h *hub) broadcastCandles(history []BroadcastMsg, live BroadcastMsg) {
 	h.mu.RUnlock()
 
 	for conn, cfg := range clients {
-		if err := sendAggregatedCandle(conn, cfg, history, live); err != nil {
+		if err := sendAggregatedCandle(conn, cfg, history, live, detector); err != nil {
 			go h.remove(conn)
 		}
 	}
 }
 
-func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []BroadcastMsg, live BroadcastMsg) error {
+func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []BroadcastMsg, live BroadcastMsg, detector DetectorSnapshot) error {
 	source := make([]BroadcastMsg, 0, len(history)+1)
 	source = append(source, history...)
 	if live.CandleOpenTime > 0 {
@@ -792,11 +813,13 @@ func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []Broa
 	}
 
 	payload, err := json.Marshal(struct {
-		Type    string       `json:"type"`
-		Payload BroadcastMsg `json:"payload"`
+		Type     string           `json:"type"`
+		Payload  BroadcastMsg     `json:"payload"`
+		Detector DetectorSnapshot `json:"detector"`
 	}{
-		Type:    "candle",
-		Payload: aggregated[len(aggregated)-1],
+		Type:     "candle",
+		Payload:  aggregated[len(aggregated)-1],
+		Detector: detector,
 	})
 	if err != nil {
 		return err
@@ -840,6 +863,38 @@ func main() {
 	)
 	seenTradeSet = make(map[string]struct{}, maxSeenTradeIDs)
 	restClient := &http.Client{Timeout: 10 * time.Second}
+	InstrumentTickSize = rowSize
+	if tickSize, err := fetchInstrumentTickSize(restClient, bybitSymbol); err != nil {
+		log.Printf("[bybit] instrument tick size fetch failed, using default %.2f: %v", rowSize, err)
+	} else {
+		InstrumentTickSize = tickSize
+	}
+	detector := NewSweepDetector(InstrumentTickSize)
+	detector.Start()
+	if sessionDayStart, sessionHigh, sessionLow, err := fetchPreviousUTCSessionRange(restClient, bybitSymbol, time.Now().UTC(), InstrumentTickSize); err != nil {
+		log.Printf("[detector] previous UTC session range unavailable: %v", err)
+	} else {
+		detector.SetSessionRange(sessionHigh, sessionLow, sessionDayStart)
+	}
+
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+
+		lastDayStart := utcDayStart(time.Now().UnixMilli())
+		for now := range ticker.C {
+			currentDayStart := utcDayStart(now.UnixMilli())
+			if currentDayStart == lastDayStart {
+				continue
+			}
+			lastDayStart = currentDayStart
+			if sessionDayStart, sessionHigh, sessionLow, err := fetchPreviousUTCSessionRange(restClient, bybitSymbol, now.UTC(), InstrumentTickSize); err != nil {
+				log.Printf("[detector] session range refresh failed: %v", err)
+			} else {
+				detector.SetSessionRange(sessionHigh, sessionLow, sessionDayStart)
+			}
+		}
+	}()
 
 	if loadedBars, loadedTrades, loadedDepth, err := store.Load(); err != nil {
 		log.Printf("[store] load failed, starting empty: %v", err)
@@ -970,6 +1025,7 @@ func main() {
 				}
 				applyStudySignals(&snapshot, summary)
 				completedBars = append(completedBars, snapshot)
+				detector.EnqueueClosedBar(detectorCandleFromBroadcast(snapshot))
 				// Cap history to last maxHistory bars
 				if len(completedBars) > maxHistory {
 					completedBars = completedBars[len(completedBars)-maxHistory:]
@@ -989,6 +1045,12 @@ func main() {
 		} else if side == "Sell" {
 			cvd -= vol
 		}
+		detector.EnqueueTrade(DetectorTick{
+			Price:       round6(price),
+			Volume:      round6(vol),
+			Side:        side,
+			TimestampMs: ts,
+		})
 	}
 
 	// FIX #5: Separate channels for trades (serial) vs orderbook/ticker (parallel)
@@ -1027,6 +1089,14 @@ func main() {
 				} else {
 					ob.applyDelta(env.Data.B, env.Data.A)
 				}
+				eventTimeMs := env.Data.CTS
+				if eventTimeMs <= 0 {
+					eventTimeMs = time.Now().UnixMilli()
+				}
+				detector.EnqueueBook(DetectorBookUpdate{
+					Levels:      ob.levelsMap(),
+					EventTimeMs: eventTimeMs,
+				})
 			} else if strings.Contains(s, `"tickers.`) {
 				var env TickerEnvelope
 				if err := json.Unmarshal(raw, &env); err != nil {
@@ -1118,7 +1188,8 @@ func main() {
 			historySnapshot := copyBroadcastBars(completedBars)
 			mu.Unlock()
 
-			h.broadcastCandles(historySnapshot, msg)
+			detectorSnapshot := detector.Snapshot()
+			h.broadcastCandles(historySnapshot, msg, detectorSnapshot)
 
 			if len(depthSnapshot.Bids) > 0 || len(depthSnapshot.Asks) > 0 {
 				depthData, err := json.Marshal(DepthEnvelope{
@@ -1138,7 +1209,7 @@ func main() {
 		Symbol:           bybitSymbol,
 		BaseCoin:         "BTC",
 		QuoteCoin:        "USD",
-		TickSize:         rowSize,
+		TickSize:         InstrumentTickSize,
 		QtyStep:          1,
 		MinOrderQty:      1,
 		MaxOrderQty:      0,
@@ -1297,7 +1368,8 @@ func main() {
 		}
 		mu.Unlock()
 
-		if err := sendAggregatedCandle(conn, cfg, historySnapshot, liveSnapshot); err != nil {
+		detectorSnapshot := detector.Snapshot()
+		if err := sendAggregatedCandle(conn, cfg, historySnapshot, liveSnapshot, detectorSnapshot); err != nil {
 			h.remove(conn)
 			return
 		}

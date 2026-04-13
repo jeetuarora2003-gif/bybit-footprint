@@ -501,3 +501,71 @@ export function drawHoveredCandleHighlight(ctx, hoveredIndex, startIdx, chartW, 
   ctx.lineWidth = 1;
   ctx.strokeRect(left + 0.5, 0.5, Math.max(1, candleW - 1), Math.max(1, chartH - 1));
 }
+
+export function drawDetectorEvents(ctx, detectorEvents, chartW, chartH, p2y) {
+  if (!detectorEvents?.length) return;
+
+  ctx.save();
+  ctx.font = "bold 10px 'JetBrains Mono', monospace";
+  ctx.textBaseline = "middle";
+
+  for (const event of detectorEvents) {
+    const price = Number(event?.swept_level) || 0;
+    if (price <= 0) continue;
+
+    const y = p2y(price);
+    if (y < 0 || y > chartH) continue;
+
+    const isFailedSweepUp = event.type === "FAILED_SWEEP_UP";
+    const baseColor = isFailedSweepUp ? RED : GREEN;
+    const outcome = String(event?.outcome || "PENDING").toUpperCase();
+    const strength = String(event?.strength || "MEDIUM").toUpperCase();
+    const lineOpacity = outcome === "FAILED"
+      ? 0.2
+      : strength === "HIGH"
+        ? 1
+        : 0.6;
+
+    ctx.strokeStyle = alphaColor(baseColor, lineOpacity);
+    ctx.lineWidth = strength === "HIGH" ? 2 : 1.5;
+    ctx.setLineDash(outcome === "PARTIAL" ? [8, 4] : []);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(chartW, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const label = `${isFailedSweepUp ? "FAILED SWEEP UP" : "FAILED SWEEP DOWN"} - ${strength}`;
+    const labelPaddingX = 8;
+    const labelWidth = Math.min(220, ctx.measureText(label).width + labelPaddingX * 2);
+    const labelX = Math.max(6, chartW - labelWidth - 8);
+    const labelY = clamp(y - 10, 6, chartH - 22);
+
+    ctx.fillStyle = alphaColor("#0b1220", Math.max(0.72, lineOpacity));
+    ctx.fillRect(labelX, labelY, labelWidth, 18);
+    ctx.strokeStyle = alphaColor(baseColor, Math.min(1, lineOpacity + 0.1));
+    ctx.lineWidth = 1;
+    ctx.strokeRect(labelX + 0.5, labelY + 0.5, labelWidth - 1, 17);
+
+    ctx.fillStyle = alphaColor(TEXT_BRIGHT, Math.max(0.7, lineOpacity));
+    ctx.textAlign = "left";
+    ctx.fillText(label, labelX + labelPaddingX, labelY + 9);
+
+    if (outcome === "SUCCESS") {
+      ctx.fillStyle = alphaColor(baseColor, 1);
+      ctx.textAlign = "center";
+      ctx.fillText("✓", Math.max(12, labelX - 10), y);
+    }
+  }
+
+  ctx.restore();
+}
+
+function alphaColor(hex, alpha = 1) {
+  const normalized = String(hex || "").replace("#", "");
+  if (normalized.length !== 6) return hex;
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${clamp(alpha, 0, 1)})`;
+}
