@@ -1,47 +1,30 @@
-import { useRef, useEffect } from "react";
+import { useEffect, useRef } from "react";
 import "./SubPanels.css";
-
-/* ═══════════════════════════════════════════════════════
-   Sub-panels: CVD line + Delta bars + OI line
-   Pure canvas, synced with main chart
-   ═══════════════════════════════════════════════════════ */
+import {
+  formatShortOriginalValue,
+  formatSignedShortOriginalValue,
+} from "../utils/exoFormat";
 
 const BG = "#0b0e14";
-const GRID = "rgba(255,255,255,0.03)";
 const GREEN = "#26a69a";
 const RED = "#ef5350";
 const BLUE = "#42a5f5";
 const YELLOW = "#ffca28";
 const TEXT = "#6b7280";
-const AXIS_W = 75; // match main chart
+const AXIS_W = 75;
 
 export default function SubPanels({ candles, activeFeatures }) {
   const cvdRef = useRef(null);
-  const deltaRef = useRef(null);
   const oiRef = useRef(null);
 
-  const candlesRef = useRef(candles);
-  candlesRef.current = candles;
-
-  const showCVD = true; // always show
-  const showDelta = true;
+  const showCVD = true;
   const showOI = activeFeatures?.has?.("oi");
 
   useEffect(() => {
-    let running = true;
-    const loop = () => {
-      if (!running) return;
-      const c = candlesRef.current;
-      if (c.length > 0) {
-        if (showCVD) drawCVDPanel(cvdRef.current, c);
-        if (showDelta) drawDeltaPanel(deltaRef.current, c);
-        if (showOI) drawOIPanel(oiRef.current, c);
-      }
-      requestAnimationFrame(loop);
-    };
-    loop();
-    return () => { running = false; };
-  }, [showCVD, showDelta, showOI]);
+    if (!candles.length) return;
+    if (showCVD) drawCVDPanel(cvdRef.current, candles);
+    if (showOI) drawOIPanel(oiRef.current, candles);
+  }, [candles, showCVD, showOI]);
 
   return (
     <div className="sub-panels">
@@ -49,12 +32,6 @@ export default function SubPanels({ candles, activeFeatures }) {
         <div className="sub-panel" style={{ height: 60 }}>
           <span className="sub-label">CVD</span>
           <canvas ref={cvdRef} className="sub-canvas" />
-        </div>
-      )}
-      {showDelta && (
-        <div className="sub-panel" style={{ height: 50 }}>
-          <span className="sub-label">Δ Vol</span>
-          <canvas ref={deltaRef} className="sub-canvas" />
         </div>
       )}
       {showOI && (
@@ -67,138 +44,190 @@ export default function SubPanels({ candles, activeFeatures }) {
   );
 }
 
-/* ── CVD line chart ────────────────────────────────── */
 function drawCVDPanel(canvas, candles) {
   if (!canvas) return;
-  const p = canvas.parentElement;
-  const w = p.clientWidth; const h = p.clientHeight;
-  if (!w || !h) return;
+  const parent = canvas.parentElement;
+  const width = parent.clientWidth;
+  const height = parent.clientHeight;
+  if (!width || !height) return;
+
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  canvas.style.width = w + "px"; canvas.style.height = h + "px";
-  const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, width, height);
 
-  const chartW = w - AXIS_W;
+  const chartW = width - AXIS_W;
   if (candles.length < 2) return;
 
-  // CVD values
-  const vals = candles.map(c => c.cvd ?? 0);
-  let min = Math.min(...vals), max = Math.max(...vals);
-  if (min === max) { min -= 1; max += 1; }
-  const range = max - min;
+  const series = candles.map((candle) => {
+    const reliable = Number(candle?.orderflow_coverage ?? 0) >= 0.999;
+    const value = Number(candle?.cvd);
+    return reliable && Number.isFinite(value) ? value : null;
+  });
+  const validValues = series.filter((value) => Number.isFinite(value));
+  const firstReliableIndex = series.findIndex((value) => Number.isFinite(value));
 
+  if (validValues.length < 2) {
+    drawPanelMessage(ctx, chartW, height, "CVD starts after live trade capture");
+    return;
+  }
+
+  let min = Math.min(...validValues);
+  let max = Math.max(...validValues);
+  if (min === max) {
+    const padding = Math.max(Math.abs(max) * 0.002, 1);
+    min -= padding;
+    max += padding;
+  }
+  const range = max - min;
   const barW = Math.max(2, chartW / candles.length);
 
-  // Grid + zero line
-  const zeroY = h - ((0 - min) / range) * h;
-  ctx.strokeStyle = "rgba(255,255,255,0.06)"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(chartW, zeroY); ctx.stroke();
-
-  // Line
-  ctx.strokeStyle = BLUE; ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  for (let i = 0; i < candles.length; i++) {
-    const x = (i + 0.5) * barW;
-    const y = h - ((vals[i] - min) / range) * (h - 4) - 2;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  if (firstReliableIndex > 0) {
+    ctx.fillStyle = "rgba(107, 114, 128, 0.12)";
+    ctx.fillRect(0, 0, firstReliableIndex * barW, height);
+    ctx.fillStyle = TEXT;
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText("history backfill", 6, height - 4);
   }
-  ctx.stroke();
 
-  // Axis label
-  ctx.fillStyle = TEXT; ctx.font = "9px 'JetBrains Mono',monospace";
-  ctx.textAlign = "left"; ctx.textBaseline = "top";
-  ctx.fillText(fmtAxis(vals[vals.length - 1]), chartW + 4, 2);
+  if (min < 0 && max > 0) {
+    const zeroY = height - ((0 - min) / range) * height;
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, zeroY);
+    ctx.lineTo(chartW, zeroY);
+    ctx.stroke();
+  }
+
+  drawGappedSeries(ctx, series, {
+    barW,
+    height,
+    min,
+    range,
+    color: BLUE,
+  });
+
+  ctx.fillStyle = TEXT;
+  ctx.font = "9px 'JetBrains Mono', monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(fmtAxis(validValues.at(-1) ?? 0), chartW + 4, 2);
 }
 
-/* ── Delta histogram ───────────────────────────────── */
-function drawDeltaPanel(canvas, candles) {
+function drawOIPanel(canvas, candles) {
   if (!canvas) return;
-  const p = canvas.parentElement;
-  const w = p.clientWidth; const h = p.clientHeight;
-  if (!w || !h) return;
+  const parent = canvas.parentElement;
+  const width = parent.clientWidth;
+  const height = parent.clientHeight;
+  if (!width || !height) return;
+
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  canvas.style.width = w + "px"; canvas.style.height = h + "px";
-  const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, width, height);
 
-  const chartW = w - AXIS_W;
-  if (candles.length === 0) return;
+  const chartW = width - AXIS_W;
+  const series = buildOISeries(candles);
+  const values = series.filter((value) => Number.isFinite(value));
+  const firstObservedIndex = series.findIndex((value) => Number.isFinite(value));
+  if (values.length < 2) {
+    drawPanelMessage(ctx, chartW, height, "Waiting for OI samples");
+    return;
+  }
 
-  const deltas = candles.map(c => c.candle_delta ?? 0);
-  const absMax = Math.max(1, ...deltas.map(Math.abs));
-  const barW = Math.max(2, chartW / candles.length);
-  const midY = h / 2;
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max) {
+    const padding = Math.max(Math.abs(max) * 0.0005, 1);
+    min -= padding;
+    max += padding;
+  }
+  const range = max - min;
+  const barW = chartW / candles.length;
 
-  // Zero line
-  ctx.strokeStyle = "rgba(255,255,255,0.06)"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(chartW, midY); ctx.stroke();
+  if (firstObservedIndex > 0) {
+    ctx.fillStyle = "rgba(107, 114, 128, 0.12)";
+    ctx.fillRect(0, 0, firstObservedIndex * barW, height);
+  }
 
-  for (let i = 0; i < candles.length; i++) {
-    const d = deltas[i];
-    const barH = (Math.abs(d) / absMax) * (midY - 2);
-    const x = i * barW + 1;
-    const bw = Math.max(1, barW - 2);
+  drawGappedSeries(ctx, series, {
+    barW,
+    height,
+    min,
+    range,
+    color: YELLOW,
+  });
 
-    ctx.fillStyle = d >= 0 ? GREEN : RED;
-    if (d >= 0) {
-      ctx.fillRect(x, midY - barH, bw, barH);
+  ctx.fillStyle = TEXT;
+  ctx.font = "9px 'JetBrains Mono', monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(fmtAxis(values.at(-1) ?? 0), chartW + 4, 2);
+}
+
+function buildOISeries(candles) {
+  let lastKnown = null;
+  return candles.map((candle) => {
+    const value = Number(candle?.oi);
+    if (Number.isFinite(value) && value > 0) {
+      lastKnown = value;
+    }
+    return lastKnown;
+  });
+}
+
+function drawGappedSeries(ctx, values, { barW, height, min, range, color }) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+
+  let drawing = false;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (!Number.isFinite(value)) {
+      drawing = false;
+      continue;
+    }
+
+    const x = (index + 0.5) * barW;
+    const y = height - ((value - min) / range) * (height - 4) - 2;
+    if (!drawing) {
+      ctx.moveTo(x, y);
+      drawing = true;
     } else {
-      ctx.fillRect(x, midY, bw, barH);
+      ctx.lineTo(x, y);
     }
   }
 
-  // Axis label
-  ctx.fillStyle = TEXT; ctx.font = "9px 'JetBrains Mono',monospace";
-  ctx.textAlign = "left"; ctx.textBaseline = "top";
-  const last = deltas[deltas.length - 1] ?? 0;
-  ctx.fillText(fmtAxis(last), chartW + 4, 2);
-}
-
-/* ── OI line chart ─────────────────────────────────── */
-function drawOIPanel(canvas, candles) {
-  if (!canvas) return;
-  const p = canvas.parentElement;
-  const w = p.clientWidth; const h = p.clientHeight;
-  if (!w || !h) return;
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  canvas.style.width = w + "px"; canvas.style.height = h + "px";
-  const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
-
-  ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
-
-  const chartW = w - AXIS_W;
-  const vals = candles.map(c => c.oi ?? 0).filter(v => v > 0);
-  if (vals.length < 2) return;
-
-  let min = Math.min(...vals), max = Math.max(...vals);
-  if (min === max) { min -= 1; max += 1; }
-  const range = max - min;
-
-  const barW = chartW / vals.length;
-
-  ctx.strokeStyle = YELLOW; ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  for (let i = 0; i < vals.length; i++) {
-    const x = (i + 0.5) * barW;
-    const y = h - ((vals[i] - min) / range) * (h - 4) - 2;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
   ctx.stroke();
-
-  ctx.fillStyle = TEXT; ctx.font = "9px 'JetBrains Mono',monospace";
-  ctx.textAlign = "left"; ctx.textBaseline = "top";
-  ctx.fillText(fmtAxis(vals[vals.length - 1]), chartW + 4, 2);
 }
 
-function fmtAxis(v) {
-  const a = Math.abs(v);
-  if (a >= 1e6) return (v / 1e6).toFixed(2) + "M";
-  if (a >= 1e3) return (v / 1e3).toFixed(1) + "K";
-  if (a >= 1) return v.toFixed(1);
-  return v.toFixed(3);
+function drawPanelMessage(ctx, chartW, height, text) {
+  ctx.fillStyle = TEXT;
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, chartW / 2, height / 2);
+}
+
+function fmtAxis(value) {
+  const numeric = Number(value) || 0;
+  if (numeric > 0) return formatShortOriginalValue(numeric, 1);
+  if (numeric < 0) return formatSignedShortOriginalValue(numeric, 1);
+  return "0";
 }

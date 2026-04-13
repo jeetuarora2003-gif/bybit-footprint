@@ -26,4 +26,5 @@
   position: relative;
   overflow: hidden;
   min-height: 0;
+  border-bottom: 1px solid var(--border);
 }

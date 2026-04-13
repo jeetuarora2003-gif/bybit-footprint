@@ -1,16 +1,18 @@
 import "./InfoBar.css";
-
-function fmt(n, d = 1) {
-  if (n == null || n === 0) return "—";
-  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + "M";
-  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(2) + "K";
-  return Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
-}
-
-function fmtPrice(n) {
-  if (!n) return "—";
-  return Number(n).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
+import {
+  formatCompactValue,
+  formatFootprintValue,
+  formatPrice,
+  formatSignedCompactValue,
+  formatShortOriginalValue,
+  formatSignedShortOriginalValue,
+} from "../utils/exoFormat";
+import {
+  describeCandleDataQuality,
+  formatCandleDataSource,
+  summarizeCandleImbalance,
+  summarizeStudySignals,
+} from "../utils/orderflow";
 
 const CLUSTER_LABELS = {
   void: "Void",
@@ -22,67 +24,107 @@ const CLUSTER_LABELS = {
   deltaLadder: "Delta Ladder",
 };
 
-export default function InfoBar({ candle, settings }) {
-  const c = candle;
+export default function InfoBar({ candle, settings, instrument }) {
+  const current = candle;
+  const hasReliableOrderflow = Number(current?.orderflow_coverage ?? 0) >= 0.999;
+  const imbalance = hasReliableOrderflow ? summarizeCandleImbalance(current) : null;
+  const studySignals = hasReliableOrderflow ? summarizeStudySignals(current).slice(0, 3) : [];
+  const quality = current ? describeCandleDataQuality(current) : null;
+  const coverage = current ? `${((Number(current.orderflow_coverage) || 0) * 100).toFixed(1)}%` : "-";
 
   return (
     <div className="info-bar">
-      {/* OHLC */}
+      <div className="ib-group">
+        <span className="ib-label">Sym</span>
+        <span className="ib-val">{instrument?.symbol || settings.symbol || "-"}</span>
+        <span className="ib-label">Tick</span>
+        <span className="ib-val">{settings.baseRowSize || instrument?.tickSize || "-"}</span>
+      </div>
+
+      <div className="ib-sep" />
+
       <div className="ib-group">
         <span className="ib-label">O</span>
-        <span className="ib-val">{c ? fmtPrice(c.open) : "—"}</span>
+        <span className="ib-val">{current ? formatPrice(current.open) : "-"}</span>
         <span className="ib-label">H</span>
-        <span className="ib-val ib-green">{c ? fmtPrice(c.high) : "—"}</span>
+        <span className="ib-val ib-green">{current ? formatPrice(current.high) : "-"}</span>
         <span className="ib-label">L</span>
-        <span className="ib-val ib-red">{c ? fmtPrice(c.low) : "—"}</span>
+        <span className="ib-val ib-red">{current ? formatPrice(current.low) : "-"}</span>
         <span className="ib-label">C</span>
-        <span className="ib-val">{c ? fmtPrice(c.close) : "—"}</span>
+        <span className="ib-val">{current ? formatPrice(current.close) : "-"}</span>
       </div>
 
       <div className="ib-sep" />
 
-      {/* Volume + Delta */}
       <div className="ib-group">
-        <span className="ib-label">Vol:</span>
-        <span className="ib-val">{c ? fmt(c.total_volume, 3) : "—"}</span>
-        <span className="ib-label">Δ:</span>
-        <span className="ib-val" style={{ color: c?.candle_delta >= 0 ? "var(--green)" : "var(--red)" }}>
-          {c ? fmt(c.candle_delta, 3) : "—"}
+        <span className="ib-label">Vol</span>
+        <span className="ib-val">{current ? formatCompactValue(current.total_volume) : "-"}</span>
+        <span className="ib-label">D</span>
+        <span className="ib-val" style={{ color: current?.candle_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
+          {current ? (hasReliableOrderflow ? formatSignedCompactValue(current.candle_delta) : "-") : "-"}
         </span>
       </div>
 
       <div className="ib-sep" />
 
-      {/* Trade counts */}
+      <div className="ib-group">
+        <span className="ib-label">Imb</span>
+        <span className="ib-val" style={{ color: imbalance ? "var(--red)" : "#6b7280" }}>
+          {imbalance ? formatFootprintValue(imbalance.value, { shortNumbers: settings?.shortNumbers }) : "-"}
+        </span>
+      </div>
+
+      <div className="ib-sep" />
+
       <div className="ib-group">
         <span className="ib-label">Trades</span>
-        <span className="ib-val ib-green">b:{c?.buy_trades ?? 0}</span>
-        <span className="ib-val ib-red">a:{c?.sell_trades ?? 0}</span>
+        <span className="ib-val ib-red">b:{current ? formatCompactValue(current.sell_volume ?? 0) : "-"}</span>
+        <span className="ib-val ib-green">a:{current ? formatCompactValue(current.buy_volume ?? 0) : "-"}</span>
       </div>
 
       <div className="ib-sep" />
 
-      {/* OI */}
       <div className="ib-group">
         <span className="ib-label">OI:</span>
-        <span className="ib-val">{c?.oi ? fmt(c.oi, 1) : "—"}</span>
-        <span className="ib-label">ΔOI:</span>
-        <span className="ib-val" style={{ color: c?.oi_delta >= 0 ? "var(--green)" : "var(--red)" }}>
-          {c?.oi_delta ? fmt(c.oi_delta, 2) : "—"}
+        <span className="ib-val">{current?.oi != null ? formatShortOriginalValue(current.oi, 1) : "-"}</span>
+        <span className="ib-label">OI d:</span>
+        <span className="ib-val" style={{ color: current?.oi_delta >= 0 ? "#42a5f5" : "var(--red)" }}>
+          {current?.oi_delta != null ? formatSignedShortOriginalValue(current.oi_delta, 1) : "-"}
         </span>
       </div>
 
       <div className="ib-sep" />
 
-      {/* Best bid/ask */}
       <div className="ib-group">
-        <span className="ib-label">Bid:</span>
-        <span className="ib-val ib-green">{c?.best_bid ? fmtPrice(c.best_bid) : "—"}</span>
-        <span className="ib-label">Ask:</span>
-        <span className="ib-val ib-red">{c?.best_ask ? fmtPrice(c.best_ask) : "—"}</span>
+        <span className="ib-label">Src</span>
+        <span className="ib-val">{current ? formatCandleDataSource(current) : "-"}</span>
+        <span className="ib-label">Cov</span>
+        <span className="ib-val">{coverage}</span>
+        <span className={`ib-badge ib-badge--${quality?.tone || "muted"}`}>
+          {quality?.label || "No data"}
+        </span>
       </div>
 
-      {/* Mode label */}
+      <div className="ib-sep" />
+
+      <div className="ib-group">
+        <span className="ib-label">Flags</span>
+        <span className="ib-val">{studySignals.length ? studySignals.join(" ") : "-"}</span>
+      </div>
+
+      <div className="ib-sep" />
+
+      <div className="ib-group">
+        <span className="ib-label">Bid:</span>
+        <span className="ib-val" style={{ color: "#42a5f5" }}>
+          {current?.best_bid ? `${formatPrice(current.best_bid)} x ${formatCompactValue(current.best_bid_size)}` : "-"}
+        </span>
+        <span className="ib-label">Ask:</span>
+        <span className="ib-val ib-red">
+          {current?.best_ask ? `${formatPrice(current.best_ask)} x ${formatCompactValue(current.best_ask_size)}` : "-"}
+        </span>
+      </div>
+
       <div className="ib-mode">
         {CLUSTER_LABELS[settings.clusterMode] ?? settings.clusterMode}
       </div>

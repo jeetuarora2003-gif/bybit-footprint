@@ -1,0 +1,120 @@
+.decision-lens {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02), transparent 35%),
+    var(--bg-surface);
+}
+
+.decision-lens--bullish {
+  box-shadow: inset 3px 0 0 rgba(66, 165, 245, 0.85);
+}
+
+.decision-lens--bearish {
+  box-shadow: inset 3px 0 0 rgba(239, 83, 80, 0.9);
+}
+
+.decision-lens--muted {
+  box-shadow: inset 3px 0 0 rgba(107, 114, 128, 0.7);
+}
+
+.decision-lens__main {
+  min-width: 0;
+  flex: 1;
+}
+
+.decision-lens__topline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.decision-lens__kicker {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.decision-lens__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.decision-lens__badge--bullish {
+  color: #9ddbf7;
+  background: rgba(66, 165, 245, 0.15);
+}
+
+.decision-lens__badge--bearish {
+  color: #ffb0ae;
+  background: rgba(239, 83, 80, 0.16);
+}
+
+.decision-lens__badge--muted {
+  color: #cbd5e1;
+  background: rgba(107, 114, 128, 0.18);
+}
+
+.decision-lens__confidence {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.decision-lens__message {
+  color: var(--text-bright, var(--text));
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.decision-lens__reason {
+  color: var(--text-dim, var(--text-muted));
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.decision-lens__rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.decision-lens__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.decision-lens__row-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.decision-lens__row-value {
+  color: var(--text);
+  font-size: 11px;
+}
+
+@media (max-width: 1100px) {
+  .decision-lens {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

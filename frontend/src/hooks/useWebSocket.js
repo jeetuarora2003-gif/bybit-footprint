@@ -1,108 +1,344 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { resolveApiBase } from "../utils/apiBase";
 
-const HOST     = window.location.host;
-const PROTOCOL = window.location.protocol === "https:" ? "wss:" : "ws:";
-const IS_LOCAL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-const BASE_WS  = IS_LOCAL ? "ws://localhost:8080"          : `${PROTOCOL}//${HOST}`;
-const BASE_HTTP = IS_LOCAL ? "http://localhost:8080"        : "";
+const DEFAULT_SYMBOL = "BTCUSD";
 
-// Timeframe value -> candle duration in ms
-const TF_MS = {
-  "15s": 15000, "30s": 30000,
-  "1m":  60000, "2m":  120000, "3m":  180000, "5m":  300000,
-  "10m": 600000, "15m": 900000, "30m": 1800000,
-  "1h":  3600000, "2h":  7200000, "4h":  14400000,
-  "6h":  21600000, "8h": 28800000, "12h": 43200000,
-  "D":   86400000, "W":  604800000, "M":  2592000000,
-};
+function normalizeInverseSymbol(symbol) {
+  const normalized = String(symbol || DEFAULT_SYMBOL).trim().toUpperCase();
+  if (!normalized) return DEFAULT_SYMBOL;
+  return normalized === "BTCUSDT" ? DEFAULT_SYMBOL : normalized;
+}
 
-export default function useWebSocket(timeframe = "1m") {
-  const [candles,    setCandles]    = useState([]);
+function resolveProxyBase() {
+  return resolveApiBase();
+}
+
+function normalizeBookLevels(levels) {
+  return (levels || []).map((level) => ({
+    price: Number(level?.price) || 0,
+    size: Number(level?.size) || 0,
+  }));
+}
+
+function normalizeClusters(clusters) {
+  return (clusters || []).map((cluster) => ({
+    price: Number(cluster?.price) || 0,
+    buyVol: Number(cluster?.buyVol) || 0,
+    sellVol: Number(cluster?.sellVol) || 0,
+    delta: Number(cluster?.delta) || 0,
+    totalVol: Number(cluster?.totalVol) || 0,
+    buyTrades: Number(cluster?.buyTrades) || 0,
+    sellTrades: Number(cluster?.sellTrades) || 0,
+    maxTradeBuy: Number(cluster?.maxTradeBuy) || 0,
+    maxTradeSell: Number(cluster?.maxTradeSell) || 0,
+    bidAskRatio: Number(cluster?.bidAskRatio) || 0,
+    imbalance_buy: Boolean(cluster?.imbalance_buy),
+    imbalance_sell: Boolean(cluster?.imbalance_sell),
+    stacked_buy: Boolean(cluster?.stacked_buy),
+    stacked_sell: Boolean(cluster?.stacked_sell),
+    large_trade_buy: Boolean(cluster?.large_trade_buy),
+    large_trade_sell: Boolean(cluster?.large_trade_sell),
+    absorption_buy: Boolean(cluster?.absorption_buy),
+    absorption_sell: Boolean(cluster?.absorption_sell),
+    exhaustion_buy: Boolean(cluster?.exhaustion_buy),
+    exhaustion_sell: Boolean(cluster?.exhaustion_sell),
+  }));
+}
+
+function normalizeCandle(candle) {
+  if (!candle) return null;
+  const buyTrades = Number(candle.buy_trades) || 0;
+  const sellTrades = Number(candle.sell_trades) || 0;
+  const buyVolume = Number(candle.buy_volume) || 0;
+  const sellVolume = Number(candle.sell_volume) || 0;
+  const orderflowCoverage = Number(candle.orderflow_coverage);
+  const inferredCoverage = candle?.clusters?.length || buyTrades > 0 || sellTrades > 0 || buyVolume > 0 || sellVolume > 0 ? 1 : 0;
+
+  return {
+    ...candle,
+    candle_open_time: Number(candle.candle_open_time) || 0,
+    open: Number(candle.open) || 0,
+    high: Number(candle.high) || 0,
+    low: Number(candle.low) || 0,
+    close: Number(candle.close) || 0,
+    row_size: Number(candle.row_size) || 0,
+    candle_delta: Number(candle.candle_delta) || 0,
+    cvd: Number(candle.cvd) || 0,
+    buy_trades: buyTrades,
+    sell_trades: sellTrades,
+    total_volume: Number(candle.total_volume) || 0,
+    buy_volume: buyVolume,
+    sell_volume: sellVolume,
+    oi: Number(candle.oi) || 0,
+    oi_delta: Number(candle.oi_delta) || 0,
+    best_bid: Number(candle.best_bid) || 0,
+    best_bid_size: Number(candle.best_bid_size) || 0,
+    best_ask: Number(candle.best_ask) || 0,
+    best_ask_size: Number(candle.best_ask_size) || 0,
+    unfinished_low: Boolean(candle.unfinished_low),
+    unfinished_high: Boolean(candle.unfinished_high),
+    absorption_low: Boolean(candle.absorption_low),
+    absorption_high: Boolean(candle.absorption_high),
+    exhaustion_low: Boolean(candle.exhaustion_low),
+    exhaustion_high: Boolean(candle.exhaustion_high),
+    sweep_buy: Boolean(candle.sweep_buy),
+    sweep_sell: Boolean(candle.sweep_sell),
+    delta_divergence_bull: Boolean(candle.delta_divergence_bull),
+    delta_divergence_bear: Boolean(candle.delta_divergence_bear),
+    clusters: normalizeClusters(candle.clusters),
+    bids: normalizeBookLevels(candle.bids),
+    asks: normalizeBookLevels(candle.asks),
+    alerts: Array.isArray(candle.alerts) ? candle.alerts.filter(Boolean) : [],
+    orderflow_coverage: Number.isFinite(orderflowCoverage) ? orderflowCoverage : inferredCoverage,
+    data_source: candle.data_source || (inferredCoverage >= 1 ? "live_trade_footprint" : "bybit_kline_backfill"),
+  };
+}
+
+function normalizeDepthSnapshot(snapshot) {
+  return {
+    timestamp: Number(snapshot?.timestamp) || 0,
+    row_size: Number(snapshot?.row_size) || 0,
+    best_bid: Number(snapshot?.best_bid) || 0,
+    best_bid_size: Number(snapshot?.best_bid_size) || 0,
+    best_ask: Number(snapshot?.best_ask) || 0,
+    best_ask_size: Number(snapshot?.best_ask_size) || 0,
+    bids: normalizeBookLevels(snapshot?.bids),
+    asks: normalizeBookLevels(snapshot?.asks),
+  };
+}
+
+function normalizeInstrument(payload, fallbackSymbol) {
+  if (!payload) {
+    return {
+      symbol: fallbackSymbol,
+      baseCoin: "",
+      quoteCoin: "",
+      tickSize: 0.1,
+      qtyStep: 0,
+      minOrderQty: 0,
+      maxOrderQty: 0,
+      minNotionalValue: 0,
+      priceScale: 1,
+      volumeUnit: "",
+      syntheticBtc: false,
+      defaultTicks: [1, 5, 10, 25, 50, 100],
+    };
+  }
+
+  return {
+    symbol: String(payload.symbol || fallbackSymbol || DEFAULT_SYMBOL).toUpperCase(),
+    baseCoin: String(payload.baseCoin || "").toUpperCase(),
+    quoteCoin: String(payload.quoteCoin || "").toUpperCase(),
+    tickSize: Number(payload.tickSize) || 0.1,
+    qtyStep: Number(payload.qtyStep) || 0,
+    minOrderQty: Number(payload.minOrderQty) || 0,
+    maxOrderQty: Number(payload.maxOrderQty) || 0,
+    minNotionalValue: Number(payload.minNotionalValue) || 0,
+    priceScale: Number(payload.priceScale) || 1,
+    volumeUnit: String(payload.volumeUnit || payload.baseCoin || "").toUpperCase(),
+    syntheticBtc: Boolean(payload.syntheticBtc),
+    defaultTicks: Array.isArray(payload.defaultTicks) && payload.defaultTicks.length
+      ? payload.defaultTicks.map((item) => Number(item) || 1).filter((item) => item > 0)
+      : [1, 5, 10, 25, 50, 100],
+  };
+}
+
+function normalizeDetectorEvent(event) {
+  return {
+    id: String(event?.id || ""),
+    type: String(event?.type || ""),
+    strength: String(event?.strength || ""),
+    score: Number(event?.score) || 0,
+    range_source: String(event?.range_source || ""),
+    swept_level: Number(event?.swept_level) || 0,
+    excursion_ticks: Number(event?.excursion_ticks) || 0,
+    reclaimed_in: String(event?.reclaimed_in || ""),
+    extreme_imbalance: Boolean(event?.extreme_imbalance),
+    delta_zscore: Number(event?.delta_zscore) || 0,
+    depletion_ratio: Number(event?.depletion_ratio) || 0,
+    wick_pct: Number(event?.wick_pct) || 0,
+    imbalance_count: Number(event?.imbalance_count) || 0,
+    expires_after: Number(event?.expires_after) || 0,
+    outcome: String(event?.outcome || "PENDING"),
+    event_candle_open_time: Number(event?.event_candle_open_time) || 0,
+    resolved_candle_open_time: Number(event?.resolved_candle_open_time) || 0,
+  };
+}
+
+function normalizeDetectorSnapshot(payload) {
+  return {
+    activeEvents: Array.isArray(payload?.active_events)
+      ? payload.active_events.map(normalizeDetectorEvent).filter((event) => event.id)
+      : [],
+    winRateLast100: Number(payload?.win_rate_last_100) || 0,
+    totalSignalsSession: Number(payload?.total_signals_session) || 0,
+  };
+}
+
+export default function useWebSocket({ timeframe = "1m", tickSize = "1", symbol = DEFAULT_SYMBOL } = {}) {
+  const normalizedSymbol = normalizeInverseSymbol(symbol);
+  const [candles, setCandles] = useState([]);
   const [liveCandle, setLiveCandle] = useState(null);
-  const [status,     setStatus]     = useState("disconnected");
+  const [depthHistory, setDepthHistory] = useState([]);
+  const [status, setStatus] = useState("disconnected");
+  const [detectorState, setDetectorState] = useState(() => normalizeDetectorSnapshot(null));
+  const [instrument, setInstrument] = useState(() => normalizeInstrument(null, normalizedSymbol));
+  const [captureStats, setCaptureStats] = useState({
+    tradeEvents: 0,
+    depthEvents: 0,
+    depthSnapshots: 0,
+    lastTradeTimestamp: 0,
+    lastDepthTimestamp: 0,
+    lastTickerTimestamp: 0,
+    reconnectCount: 0,
+  });
+  const [replayState, setReplayState] = useState({
+    available: false,
+    enabled: false,
+    totalEvents: 0,
+    cursor: 0,
+    startTime: null,
+    currentTime: null,
+  });
 
-  const wsRef          = useRef(null);
-  const reconnectRef   = useRef(null);
-  const lastOpenRef    = useRef(null);
-  const lastCandleRef  = useRef(null);
-  const historySetRef  = useRef(new Set());
-  const timeframeRef   = useRef(timeframe);
-  timeframeRef.current = timeframe;
+  const workerRef = useRef(null);
 
-  const connect = useCallback(() => {
-    if (wsRef.current) wsRef.current.close();
+  const applySnapshot = useCallback((payload) => {
+    const nextCandles = Array.isArray(payload?.candles)
+      ? payload.candles.map(normalizeCandle).filter((candle) => candle?.candle_open_time)
+      : [];
+    const nextLive = normalizeCandle(payload?.liveCandle);
+    const nextDepth = Array.isArray(payload?.depthHistory)
+      ? payload.depthHistory.map(normalizeDepthSnapshot).filter((snapshot) => snapshot.timestamp > 0)
+      : [];
 
-    const fetchHistory = async () => {
-      try {
-        const res  = await fetch(`${BASE_HTTP}/history`);
-        const hist = await res.json();
-        if (Array.isArray(hist) && hist.length > 0) {
-          setCandles(hist);
-          const times = new Set(hist.map(c => c.candle_open_time));
-          historySetRef.current = times;
-          lastOpenRef.current   = hist[hist.length - 1].candle_open_time;
-        }
-      } catch (e) {
-        console.warn("[history] not available, starting from live:", e.message);
+    setCandles(nextCandles);
+    setLiveCandle(nextLive);
+    setDepthHistory(nextDepth);
+    if (payload?.status) {
+      setStatus(payload.status);
+    }
+  }, []);
+
+  const applyLiveUpdate = useCallback((payload) => {
+    const nextLive = normalizeCandle(payload);
+    if (!nextLive?.candle_open_time) return;
+    setLiveCandle(nextLive);
+  }, []);
+
+  const appendDepthSnapshot = useCallback((payload) => {
+    const nextSnapshot = normalizeDepthSnapshot(payload);
+    if (!nextSnapshot.timestamp) return;
+
+    setDepthHistory((current) => {
+      const combined = [...current];
+      const last = combined.at(-1);
+      if (last?.timestamp === nextSnapshot.timestamp) {
+        combined[combined.length - 1] = nextSnapshot;
+      } else if (!last || nextSnapshot.timestamp > last.timestamp) {
+        combined.push(nextSnapshot);
+      }
+      return combined.slice(-4000);
+    });
+  }, []);
+
+  useEffect(() => {
+    setDetectorState(normalizeDetectorSnapshot(null));
+    const worker = new Worker(new URL("../workers/marketDataWorker.js", import.meta.url), {
+      type: "module",
+    });
+    workerRef.current = worker;
+
+    worker.onmessage = (event) => {
+      const { type, payload } = event.data || {};
+      if (type === "snapshot") {
+        applySnapshot(payload);
+      } else if (type === "live") {
+        applyLiveUpdate(payload);
+      } else if (type === "depth") {
+        appendDepthSnapshot(payload);
+      } else if (type === "status") {
+        setStatus(typeof payload === "string" ? payload : "disconnected");
+      } else if (type === "replay") {
+        setReplayState({
+          available: Boolean(payload?.available),
+          enabled: Boolean(payload?.enabled),
+          totalEvents: Number(payload?.totalEvents) || 0,
+          cursor: Number(payload?.cursor) || 0,
+          startTime: Number(payload?.startTime) || null,
+          currentTime: Number(payload?.currentTime) || null,
+        });
+      } else if (type === "instrument") {
+        setInstrument(normalizeInstrument(payload, normalizedSymbol));
+      } else if (type === "capture") {
+        setCaptureStats({
+          tradeEvents: Number(payload?.tradeEvents) || 0,
+          depthEvents: Number(payload?.depthEvents) || 0,
+          depthSnapshots: Number(payload?.depthSnapshots) || 0,
+          lastTradeTimestamp: Number(payload?.lastTradeTimestamp) || 0,
+          lastDepthTimestamp: Number(payload?.lastDepthTimestamp) || 0,
+          lastTickerTimestamp: Number(payload?.lastTickerTimestamp) || 0,
+          reconnectCount: Number(payload?.reconnectCount) || 0,
+        });
+      } else if (type === "detector") {
+        setDetectorState(normalizeDetectorSnapshot(payload));
       }
     };
 
-    fetchHistory().then(() => {
-      setStatus("connecting");
-      const ws = new WebSocket(BASE_WS);
-      wsRef.current = ws;
-
-      ws.onopen = () => setStatus("connected");
-
-      ws.onmessage = (evt) => {
-        try {
-          const msg      = JSON.parse(evt.data);
-          const tfMs     = TF_MS[timeframeRef.current] ?? 60000;
-          // Re-bucket the server's 1-min candle_open_time into the selected timeframe
-          const rawOpen  = msg.candle_open_time;
-          const openTime = rawOpen - (rawOpen % tfMs);
-          const rebucketedMsg = { ...msg, candle_open_time: openTime };
-
-          if (
-            lastOpenRef.current !== null &&
-            openTime !== lastOpenRef.current &&
-            lastCandleRef.current
-          ) {
-            const archived = { ...lastCandleRef.current };
-            if (!historySetRef.current.has(archived.candle_open_time)) {
-              historySetRef.current.add(archived.candle_open_time);
-              setCandles(prev => [...prev, archived]);
-            }
-          }
-
-          lastOpenRef.current   = openTime;
-          lastCandleRef.current = rebucketedMsg;
-          setLiveCandle(rebucketedMsg);
-        } catch { /* ignore parse errors */ }
-      };
-
-      ws.onerror = () => {};
-
-      ws.onclose = () => {
-        setStatus("disconnected");
-        reconnectRef.current = setTimeout(connect, 2000);
-      };
+    worker.postMessage({
+      type: "init",
+      payload: {
+        symbol: normalizedSymbol,
+        proxyBase: resolveProxyBase(),
+      },
     });
-  }, []); // intentionally no deps — timeframe reads from ref
 
-  // Reconnect when timeframe changes: clear all state, reconnect
-  useEffect(() => {
-    setCandles([]);
-    setLiveCandle(null);
-    lastOpenRef.current   = null;
-    lastCandleRef.current = null;
-    historySetRef.current = new Set();
-    connect();
     return () => {
-      clearTimeout(reconnectRef.current);
-      if (wsRef.current) wsRef.current.close();
+      worker.postMessage({ type: "shutdown" });
+      worker.terminate();
+      workerRef.current = null;
     };
-  }, [timeframe, connect]);
+  }, [appendDepthSnapshot, applyLiveUpdate, applySnapshot, normalizedSymbol]);
 
-  return { candles, liveCandle, status };
+  useEffect(() => {
+    if (!workerRef.current) return;
+    workerRef.current.postMessage({
+      type: "settings",
+      payload: {
+        timeframe,
+        tickSize,
+      },
+    });
+  }, [timeframe, tickSize]);
+
+  const startReplay = useCallback(() => {
+    workerRef.current?.postMessage({ type: "replay-start" });
+  }, []);
+
+  const stopReplay = useCallback(() => {
+    workerRef.current?.postMessage({ type: "replay-stop" });
+  }, []);
+
+  const stepReplay = useCallback((delta) => {
+    workerRef.current?.postMessage({
+      type: "replay-step",
+      payload: { delta },
+    });
+  }, []);
+
+  return {
+    candles,
+    liveCandle,
+    depthHistory,
+    status,
+    activeDetectorEvents: detectorState.activeEvents,
+    detectorWinRateLast100: detectorState.winRateLast100,
+    detectorTotalSignalsSession: detectorState.totalSignalsSession,
+    instrument,
+    captureStats,
+    replayState,
+    startReplay,
+    stopReplay,
+    stepReplay,
+  };
 }

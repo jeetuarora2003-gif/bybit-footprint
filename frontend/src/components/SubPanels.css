@@ -29,3 +29,42 @@
   width: 100%;
   height: 100%;
 }
+
+.sub-panel--tape {
+  background: #0b0e14;
+}
+
+.sub-tape {
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px 8px 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.sub-tape-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 72px;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text);
+}
+
+.sub-tape-row--buy .sub-tape-price,
+.sub-tape-row--buy .sub-tape-size {
+  color: var(--green);
+}
+
+.sub-tape-row--sell .sub-tape-price,
+.sub-tape-row--sell .sub-tape-size {
+  color: var(--red);
+}
+
+.sub-tape-time {
+  color: var(--text-muted);
+}
+
+.sub-tape-price,
+.sub-tape-size {
+  text-align: right;
+}
