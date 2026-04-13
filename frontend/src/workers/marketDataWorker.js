@@ -30,6 +30,7 @@ const SEEN_TRADE_ID_TRIM_BATCH = 1024;
 const RECONNECT_MS = 2_000;
 const BROADCAST_MS = 250;
 const FEED_STALE_MS = 4_000;
+const HEALTH_PING_MS = 4 * 60_000;
 const BOOK_LEVELS = 40;
 const REPLAY_WINDOW_MS = 30 * 60_000;
 const REPLAY_MIN_EVENTS = 50;
@@ -92,6 +93,7 @@ function createEngine() {
     heartbeatId: null,
     reconnectId: null,
     broadcastId: null,
+    healthPingId: null,
     shuttingDown: false,
     completedBars: [],
     aggregatedHistory: [],
@@ -204,6 +206,7 @@ function createEngine() {
     void hydrateDepthHistoryFromProxy();
     connect();
     startBroadcastLoop();
+    startHealthPingLoop();
   }
 
   function updateSettings(payload) {
@@ -232,6 +235,10 @@ function createEngine() {
     if (state.broadcastId) {
       clearInterval(state.broadcastId);
       state.broadcastId = null;
+    }
+    if (state.healthPingId) {
+      clearInterval(state.healthPingId);
+      state.healthPingId = null;
     }
     if (state.tradePersistTimeoutId) {
       clearTimeout(state.tradePersistTimeoutId);
@@ -673,6 +680,15 @@ function createEngine() {
         payload: liveCandle,
       });
     }, BROADCAST_MS);
+  }
+
+  function startHealthPingLoop() {
+    if (state.healthPingId) {
+      clearInterval(state.healthPingId);
+    }
+    state.healthPingId = setInterval(() => {
+      fetch(`${state.proxyBase}/health`).catch(() => {});
+    }, HEALTH_PING_MS);
   }
 
   function handleSocketPayload(message) {
