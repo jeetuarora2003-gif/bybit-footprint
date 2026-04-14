@@ -203,11 +203,6 @@ const (
 	bybitReconnectDelay     = 1 * time.Second
 )
 
-var allowedFrontendOrigins = map[string]struct{}{
-	"http://localhost:5173": {},
-	"http://127.0.0.1:5173": {},
-}
-
 type bucketAccum struct {
 	buyVol       float64
 	sellVol      float64
@@ -336,9 +331,6 @@ func annotateClusterSignals(clusters []Cluster) clusterSignalSummary {
 		if cluster.LargeTradeBuy || cluster.LargeTradeSell {
 			summary.LargeTradeCount += 1
 		}
-		// Exocharts-style diagonal imbalance:
-		// buy/ask aggression at the current level vs sell/bid one level below,
-		// and sell/bid aggression at the current level vs buy/ask one level above.
 		if i > 0 {
 			below := clusters[i-1]
 			if below.SellVol > 0 && cluster.BuyVol >= below.SellVol*cfg.ImbalanceThreshold && cluster.BuyVol >= cfg.MinImbalanceVolume {
@@ -546,16 +538,18 @@ func httpPort() string {
 	return port
 }
 
+// allowAllOrigins accepts requests from any origin (required for Railway + Vercel deployment)
 func isAllowedFrontendOrigin(origin string) bool {
-	_, ok := allowedFrontendOrigins[origin]
-	return ok
+	return true
 }
 
 func applyAPIHeaders(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin != "" && isAllowedFrontendOrigin(origin) {
+	if origin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
+	} else {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 	}
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -947,7 +941,6 @@ func main() {
 		oi.update(currentOI)
 	}
 
-	// FIX #5: processTrade is called only from single-threaded tradeCh goroutine — no races
 	processTrade := func(price, vol float64, side string, ts, seq int64, tradeID string) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -991,7 +984,6 @@ func main() {
 
 		openT := candleOpenTime(ts)
 		if candle == nil || openT != candle.openTime {
-			// FIX #1 + #6: Snapshot the closing bar (with full clusters + closed OI delta) into completedBars
 			if candle != nil && candle.hasTick {
 				clusters, summary := candle.footprint()
 				closedOIDelta := oi.barClose()
@@ -1026,7 +1018,6 @@ func main() {
 				applyStudySignals(&snapshot, summary)
 				completedBars = append(completedBars, snapshot)
 				detector.EnqueueClosedBar(detectorCandleFromBroadcast(snapshot))
-				// Cap history to last maxHistory bars
 				if len(completedBars) > maxHistory {
 					completedBars = completedBars[len(completedBars)-maxHistory:]
 				}
@@ -1034,7 +1025,6 @@ func main() {
 					log.Printf("[store] bar append failed: %v", err)
 				}
 			} else if candle != nil {
-				// bar rotated but had no ticks — still advance OI baseline
 				oi.barClose()
 			}
 			candle = newCandle(openT)
@@ -1053,11 +1043,9 @@ func main() {
 		})
 	}
 
-	// FIX #5: Separate channels for trades (serial) vs orderbook/ticker (parallel)
 	tradeCh := make(chan []byte, 1024)
 	miscCh := make(chan []byte, 512)
 
-	// Single-threaded trade processor — preserves order
 	go func() {
 		for raw := range tradeCh {
 			var env TradeEnvelope
@@ -1075,7 +1063,6 @@ func main() {
 		}
 	}()
 
-	// Orderbook deltas are order-dependent, so keep misc market data serial.
 	go func() {
 		for raw := range miscCh {
 			s := string(raw)
@@ -1112,7 +1099,6 @@ func main() {
 		}
 	}()
 
-	// ── Bybit reader with fixed reconnect delay ──
 	go func() {
 		for {
 			if err := connectBybit(tradeCh, miscCh); err != nil {
@@ -1122,7 +1108,6 @@ func main() {
 		}
 	}()
 
-	// ── 500ms live broadcast ticker ──
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
@@ -1221,8 +1206,7 @@ func main() {
 	}
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			origin := strings.TrimSpace(r.Header.Get("Origin"))
-			return origin == "" || isAllowedFrontendOrigin(origin)
+			return true // allow all origins for WebSocket
 		},
 	}
 	parseHistoryLimit := func(raw string) int {
@@ -1255,7 +1239,6 @@ func main() {
 		writeJSON(w, instrumentPayload)
 	})
 
-	// FIX #1: /history returns completed bars with full clusters for frontend preload
 	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 		if applyAPIHeaders(w, r) {
 			return
@@ -1317,7 +1300,6 @@ func main() {
 		writeJSON(w, payload)
 	})
 
-	// ── Local WS server on :8080 ──
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -1393,7 +1375,7 @@ func main() {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Bybit V5 WebSocket — FIX #5: separate tradeCh and miscCh
+//  Bybit V5 WebSocket
 // ════════════════════════════════════════════════════════════════════
 
 func connectBybit(tradeCh chan<- []byte, miscCh chan<- []byte) error {
@@ -1436,7 +1418,6 @@ func connectBybit(tradeCh chan<- []byte, miscCh chan<- []byte) error {
 
 		s := string(raw)
 		if strings.Contains(s, `"publicTrade.`) {
-			// FIX #5: trades go to dedicated serial channel
 			select {
 			case tradeCh <- raw:
 			default:
