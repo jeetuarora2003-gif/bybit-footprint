@@ -2,4 +2,6 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "go run main.go"
+startCommand = "./footprint"
+healthcheckPath = "/health"
+healthcheckTimeout = 300

@@ -1,0 +1,7 @@
+[phases.build]
+cmds = [
+  "go build -o footprint ."
+]
+
+[start]
+cmd = "./footprint"
