@@ -747,16 +747,22 @@ type clientConfig struct {
 	TickMultiplier float64
 }
 
-type hub struct {
-	mu      sync.RWMutex
-	clients map[*websocket.Conn]clientConfig
+type wsClient struct {
+	conn *websocket.Conn
+	cfg  clientConfig
+	mu   sync.Mutex
 }
 
-func newHub() *hub { return &hub{clients: make(map[*websocket.Conn]clientConfig)} }
+type hub struct {
+	mu      sync.RWMutex
+	clients map[*websocket.Conn]*wsClient
+}
+
+func newHub() *hub { return &hub{clients: make(map[*websocket.Conn]*wsClient)} }
 
 func (h *hub) add(c *websocket.Conn, cfg clientConfig) {
 	h.mu.Lock()
-	h.clients[c] = cfg
+	h.clients[c] = &wsClient{conn: c, cfg: cfg}
 	h.mu.Unlock()
 }
 
@@ -769,40 +775,43 @@ func (h *hub) remove(c *websocket.Conn) {
 
 func (h *hub) broadcast(data []byte) {
 	h.mu.RLock()
-	clients := make([]*websocket.Conn, 0, len(h.clients))
-	for c := range h.clients {
+	clients := make([]*wsClient, 0, len(h.clients))
+	for _, c := range h.clients {
 		clients = append(clients, c)
 	}
 	h.mu.RUnlock()
 	for _, c := range clients {
-		if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
-			go h.remove(c)
+		c.mu.Lock()
+		err := c.conn.WriteMessage(websocket.TextMessage, data)
+		c.mu.Unlock()
+		if err != nil {
+			go h.remove(c.conn)
 		}
 	}
 }
 
 func (h *hub) broadcastCandles(history []BroadcastMsg, live BroadcastMsg, detector DetectorSnapshot) {
 	h.mu.RLock()
-	clients := make(map[*websocket.Conn]clientConfig, len(h.clients))
-	for conn, cfg := range h.clients {
-		clients[conn] = cfg
+	clients := make([]*wsClient, 0, len(h.clients))
+	for _, c := range h.clients {
+		clients = append(clients, c)
 	}
 	h.mu.RUnlock()
 
-	for conn, cfg := range clients {
-		if err := sendAggregatedCandle(conn, cfg, history, live, detector); err != nil {
-			go h.remove(conn)
+	for _, c := range clients {
+		if err := sendAggregatedCandle(c, history, live, detector); err != nil {
+			go h.remove(c.conn)
 		}
 	}
 }
 
-func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []BroadcastMsg, live BroadcastMsg, detector DetectorSnapshot) error {
+func sendAggregatedCandle(c *wsClient, history []BroadcastMsg, live BroadcastMsg, detector DetectorSnapshot) error {
 	source := make([]BroadcastMsg, 0, len(history)+1)
 	source = append(source, history...)
 	if live.CandleOpenTime > 0 {
 		source = append(source, live)
 	}
-	aggregated := aggregateBroadcastBars(source, cfg.Timeframe, cfg.TickMultiplier)
+	aggregated := aggregateBroadcastBars(source, c.cfg.Timeframe, c.cfg.TickMultiplier)
 	if len(aggregated) == 0 {
 		return nil
 	}
@@ -819,7 +828,10 @@ func sendAggregatedCandle(conn *websocket.Conn, cfg clientConfig, history []Broa
 	if err != nil {
 		return err
 	}
-	return conn.WriteMessage(websocket.TextMessage, payload)
+	
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteMessage(websocket.TextMessage, payload)
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1352,7 +1364,8 @@ func main() {
 		mu.Unlock()
 
 		detectorSnapshot := detector.Snapshot()
-		if err := sendAggregatedCandle(conn, cfg, historySnapshot, liveSnapshot, detectorSnapshot); err != nil {
+		tmpClient := &wsClient{conn: conn, cfg: cfg}
+		if err := sendAggregatedCandle(tmpClient, historySnapshot, liveSnapshot, detectorSnapshot); err != nil {
 			h.remove(conn)
 			return
 		}
