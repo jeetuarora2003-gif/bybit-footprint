@@ -280,7 +280,11 @@ export default function App() {
               viewCommand={viewCommand}
             />
           </div>
-          <SubPanels candles={allCandles} activeFeatures={activeFeatures} />
+          <SubPanels
+            candles={allCandles}
+            activeFeatures={activeFeatures}
+            timeframe={resolvedSettings.timeframe}
+          />
         </div>
       </div>
       <StatusBar
