@@ -11,6 +11,8 @@ import {
   describeCandleDataQuality,
   formatCandleDataSource,
   summarizeCandleImbalance,
+  summarizeLargestClusterDelta,
+  summarizeLargestClusterVolume,
   summarizeStudySignals,
 } from "../utils/orderflow";
 
@@ -28,15 +30,31 @@ export default function InfoBar({ candle, settings, instrument }) {
   const current = candle;
   const hasReliableOrderflow = Number(current?.orderflow_coverage ?? 0) >= 0.999;
   const imbalance = hasReliableOrderflow ? summarizeCandleImbalance(current) : null;
+  const strongestClusterDelta = hasReliableOrderflow ? summarizeLargestClusterDelta(current) : null;
+  const strongestClusterVolume = hasReliableOrderflow ? summarizeLargestClusterVolume(current) : null;
   const studySignals = hasReliableOrderflow ? summarizeStudySignals(current).slice(0, 3) : [];
   const quality = current ? describeCandleDataQuality(current) : null;
   const coverage = current ? `${((Number(current.orderflow_coverage) || 0) * 100).toFixed(1)}%` : "-";
+  const barTime = current?.candle_open_time
+    ? new Date(Number(current.candle_open_time)).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+    : "-";
+  const focusMetric = resolveFocusMetric({
+    dataView: settings?.dataView,
+    imbalance,
+    strongestClusterDelta,
+    strongestClusterVolume,
+  });
 
   return (
     <div className="info-bar">
       <div className="ib-group">
         <span className="ib-label">Sym</span>
         <span className="ib-val">{instrument?.symbol || settings.symbol || "-"}</span>
+        <span className="ib-label">Bar</span>
+        <span className="ib-val">{barTime}</span>
         <span className="ib-label">Tick</span>
         <span className="ib-val">{settings.baseRowSize || instrument?.tickSize || "-"}</span>
       </div>
@@ -68,9 +86,9 @@ export default function InfoBar({ candle, settings, instrument }) {
       <div className="ib-sep" />
 
       <div className="ib-group">
-        <span className="ib-label">Imb</span>
-        <span className="ib-val" style={{ color: imbalance ? "var(--red)" : "#6b7280" }}>
-          {imbalance ? formatFootprintValue(imbalance.value, { shortNumbers: settings?.shortNumbers }) : "-"}
+        <span className="ib-label">{focusMetric.label}</span>
+        <span className="ib-val" style={{ color: focusMetric.color }}>
+          {focusMetric.value}
         </span>
       </div>
 
@@ -130,4 +148,39 @@ export default function InfoBar({ candle, settings, instrument }) {
       </div>
     </div>
   );
+}
+
+function resolveFocusMetric({ dataView, imbalance, strongestClusterDelta, strongestClusterVolume }) {
+  if (dataView === "delta" && strongestClusterDelta) {
+    return {
+      label: "Row Δ",
+      value: formatFootprintValue(strongestClusterDelta.value, { signed: true, shortNumbers: true }),
+      color: strongestClusterDelta.value >= 0 ? "#42a5f5" : "var(--red)",
+    };
+  }
+
+  if (dataView === "volume" && strongestClusterVolume) {
+    return {
+      label: "Row Vol",
+      value: formatFootprintValue(strongestClusterVolume.value, { shortNumbers: true }),
+      color: "#cbd5e1",
+    };
+  }
+
+  if (imbalance) {
+    return {
+      label: "Imb",
+      value: formatFootprintValue(
+        imbalance.side === "buy" ? imbalance.value : -imbalance.value,
+        { signed: true, shortNumbers: true },
+      ),
+      color: imbalance.side === "buy" ? "#42a5f5" : "var(--red)",
+    };
+  }
+
+  return {
+    label: "Imb",
+    value: "-",
+    color: "#6b7280",
+  };
 }

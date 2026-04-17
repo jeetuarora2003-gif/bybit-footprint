@@ -32,6 +32,42 @@ export function candleHasImbalance(candle) {
   return Boolean(summarizeCandleImbalance(candle))
 }
 
+export function summarizeLargestClusterDelta(candle) {
+  if (!candle?.clusters?.length) return null
+
+  let strongest = null
+  for (const cluster of candle.clusters) {
+    const delta = Number(cluster?.delta) || 0
+    if (!delta) continue
+    if (!strongest || Math.abs(delta) > Math.abs(strongest.value)) {
+      strongest = {
+        value: delta,
+        price: Number(cluster?.price) || 0,
+      }
+    }
+  }
+
+  return strongest
+}
+
+export function summarizeLargestClusterVolume(candle) {
+  if (!candle?.clusters?.length) return null
+
+  let strongest = null
+  for (const cluster of candle.clusters) {
+    const totalVol = Number(cluster?.totalVol) || 0
+    if (!totalVol) continue
+    if (!strongest || totalVol > strongest.value) {
+      strongest = {
+        value: totalVol,
+        price: Number(cluster?.price) || 0,
+      }
+    }
+  }
+
+  return strongest
+}
+
 export function summarizeStudySignals(candle) {
   if (!candle) return []
 
