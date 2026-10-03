@@ -30,4 +30,4 @@ npm run dev
 ## Scope and verification
 This is a development and data-visualization project. Market connectivity and runtime performance depend on configuration, network conditions and the upstream API. No independently verified throughput, latency or frame-rate benchmark is claimed.
 
-The repository contains historical compiled binaries; build from source when evaluating the project. A packaged public release is not documented here.
+Generated executables are excluded from the source tree. Build from source when evaluating the project; a packaged public release is not documented here.
