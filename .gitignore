@@ -1,0 +1,11 @@
+# Generated Go executables
+/backend/footprint
+/backend/footprint.exe
+/backend/footprint.exe~
+/backend/stress_test/stress
+/backend/stress_test/stress.exe
+
+# Local configuration
+.env
+.env.*
+!.env.example
